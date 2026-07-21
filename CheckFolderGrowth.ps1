@@ -1,47 +1,121 @@
-# Identify folders where contents have grown more than the threshhold since yesterday.
+# Identify folders where contents have grown more than the threshold in the given time range.
 
 # Run this if script needs permission
 # Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope Process
 
-# --- CONFIGURATION ---
-$TargetDirectory = "C:\" # Change to the directory you want to scan
-$GrowthThresholdMB = 100                        # Minimum size increase to report
-# ---------------------
+# --- SIDECAR SETTINGS ---
+$SidecarPath = Join-Path $PSScriptRoot "CheckFolderGrowth.yaml"
+$defaults = @{ TargetDirectory = 'C:\'; GrowthThresholdMB = 100; HistoryDays = 1 }
 
-# Calculate the timestamp for exactly 24 hours ago
-$24HoursAgo = (Get-Date).AddDays(-1)
+if (-not (Test-Path $SidecarPath)) {
+    Set-Content $SidecarPath "TargetDirectory: '$($defaults.TargetDirectory)'`nGrowthThresholdMB: $($defaults.GrowthThresholdMB)`nHistoryDays: $($defaults.HistoryDays)"
+}
 
-Write-Host "Scanning '$TargetDirectory' for changes since $24HoursAgo..." -ForegroundColor Cyan
+# Parse the 3 known keys from YAML (no module required)
+$yaml = @{}
+Get-Content $SidecarPath | ForEach-Object {
+    if ($_ -match "^(\w+):\s*'?([^']*)'?\s*$") { $yaml[$Matches[1]] = $Matches[2] }
+}
+$prev = @{
+    TargetDirectory   = if ($yaml.TargetDirectory)   { $yaml.TargetDirectory }   else { $defaults.TargetDirectory }
+    GrowthThresholdMB = if ($yaml.GrowthThresholdMB) { [int]$yaml.GrowthThresholdMB } else { $defaults.GrowthThresholdMB }
+    HistoryDays       = if ($yaml.HistoryDays)       { [int]$yaml.HistoryDays }       else { $defaults.HistoryDays }
+}
+
+# --- PROMPTS ---
+$inputDir   = Read-Host "Parent directory to scan [$($prev.TargetDirectory)]"
+$TargetDirectory   = if ($inputDir.Trim())   { $inputDir.Trim() }   else { $prev.TargetDirectory }
+
+$inputMB    = Read-Host "Growth threshold in MB [$($prev.GrowthThresholdMB)]"
+$GrowthThresholdMB = if ($inputMB.Trim())    { [int]$inputMB.Trim() }    else { $prev.GrowthThresholdMB }
+
+$inputDays  = Read-Host "History range in days [$($prev.HistoryDays)]"
+$HistoryDays       = if ($inputDays.Trim())  { [int]$inputDays.Trim() }  else { $prev.HistoryDays }
+
+# Save settings back to sidecar
+Set-Content $SidecarPath "TargetDirectory: '$TargetDirectory'`nGrowthThresholdMB: $GrowthThresholdMB`nHistoryDays: $HistoryDays"
+# -------------------------
+
+$SinceDate = (Get-Date).AddDays(-$HistoryDays)
+
+Write-Host "Scanning '$TargetDirectory' for changes since $SinceDate..." -ForegroundColor Cyan
 Write-Host "Looking for folders that grew by more than $GrowthThresholdMB MB..." -ForegroundColor Cyan
 Write-Host "--------------------------------------------------------"
 
-# Get all subdirectories
-$SubFolders = Get-ChildItem -Path $TargetDirectory -Directory -Recurse -ErrorAction SilentlyContinue
+# Reserve the status line and record its position
+Write-Host ""
+$StatusRow = [Console]::CursorTop - 1
 
-$FlaggedFoldersCount = 0
+# Move cursor below the status line so results print beneath it
+[Console]::SetCursorPosition(0, $StatusRow + 1)
 
-foreach ($Folder in $SubFolders) {
-    # Find files inside this specific folder modified or created in the last 24 hours
-    $NewFiles = Get-ChildItem -Path $Folder.FullName -File -ErrorAction SilentlyContinue | Where-Object {
-        $_.LastWriteTime -gt $24HoursAgo -or $_.CreationTime -gt $24HoursAgo
-    }
-
-    if ($NewFiles) {
-        # Sum up the sizes of the new/modified files
-        $TotalNewBytes = ($NewFiles | Measure-Object -Property Length -Sum).Sum
-        $TotalNewMB = [Math]::Round($TotalNewBytes / 1MB, 2)
-
-        # Check if the growth exceeds your threshold
-        if ($TotalNewMB -ge $GrowthThresholdMB) {
-            Write-Host "⚠️ $($Folder.FullName)" -ForegroundColor Yellow
-            Write-Host "   -> Grew by $TotalNewMB MB in the last 24 hours." -ForegroundColor White
-            $FlaggedFoldersCount++
-        }
-    }
+function Write-Status ($row, $text, $color = 'DarkCyan') {
+    $saved = [Console]::CursorTop
+    [Console]::SetCursorPosition(0, $row)
+    $trimmed = if ($text.Length -gt [Console]::WindowWidth - 1) { $text.Substring(0, [Console]::WindowWidth - 1) } else { $text }
+    Write-Host $trimmed.PadRight([Console]::WindowWidth - 1) -ForegroundColor $color -NoNewline
+    [Console]::SetCursorPosition(0, $saved)
 }
 
-if ($FlaggedFoldersCount -eq 0) {
-    Write-Host "Scan complete. No folders grew by more than $GrowthThresholdMB MB since yesterday." -ForegroundColor Green
-} else {
-    Write-Host "Scan complete. Found $FlaggedFoldersCount folder(s) matching criteria." -ForegroundColor Green
+$spinner = @('|','/','-','\')
+$ScanStart = Get-Date
+
+try {
+    # Phase 1: Build folder list (streaming, interruptible)
+    Write-Status $StatusRow "$($spinner[0])  Running 0 sec.  Building folder list..."
+    $SubFolders = [System.Collections.Generic.List[string]]::new()
+    $i = 0
+    $lastUpdate = [datetime]::Now
+    foreach ($dir in [System.IO.Directory]::EnumerateDirectories($TargetDirectory, '*', [System.IO.SearchOption]::AllDirectories)) {
+        $SubFolders.Add($dir)
+        if (([datetime]::Now - $lastUpdate).TotalMilliseconds -ge 250) {
+            $elapsed = [int](New-TimeSpan -Start $ScanStart).TotalSeconds
+            Write-Status $StatusRow "$($spinner[$i % 4])  Running $elapsed sec.  Building folder list... ($($SubFolders.Count) found)"
+            $i++
+            $lastUpdate = [datetime]::Now
+        }
+    }
+    $FolderCount = $SubFolders.Count
+
+    # Phase 2: Analyze each folder
+    $FlaggedFoldersCount = 0
+    $FolderIndex = 0
+
+    foreach ($Folder in $SubFolders) {
+        $FolderIndex++
+        $elapsed = [int](New-TimeSpan -Start $ScanStart).TotalSeconds
+        Write-Status $StatusRow "Running $elapsed sec.  Analyzing $FolderIndex of $FolderCount  $($Folder.FullName)"
+
+        $NewFiles = Get-ChildItem -Path $Folder.FullName -File -ErrorAction SilentlyContinue | Where-Object {
+            $_.LastWriteTime -gt $SinceDate -or $_.CreationTime -gt $SinceDate
+        }
+
+        if ($NewFiles) {
+            $TotalNewMB = [Math]::Round(($NewFiles | Measure-Object -Property Length -Sum).Sum / 1MB, 2)
+
+            if ($TotalNewMB -ge $GrowthThresholdMB) {
+                Write-Host "⚠️  $($Folder.FullName)" -ForegroundColor Yellow
+                Write-Host "    -> Grew by $TotalNewMB MB in the last $HistoryDays day(s)." -ForegroundColor White
+                $FlaggedFoldersCount++
+            }
+        }
+    }
+
+    # Clear status line and print summary
+    [Console]::SetCursorPosition(0, $StatusRow)
+    Write-Host "".PadRight([Console]::WindowWidth - 1)
+    [Console]::SetCursorPosition(0, $StatusRow)
+
+    if ($FlaggedFoldersCount -eq 0) {
+        Write-Host "Scan complete. No folders grew by more than $GrowthThresholdMB MB." -ForegroundColor Green
+    } else {
+        Write-Host "Scan complete. Found $FlaggedFoldersCount folder(s) matching criteria." -ForegroundColor Green
+    }
+    $completed = $true
+} finally {
+    if (-not $completed) {
+        [Console]::SetCursorPosition(0, $StatusRow)
+        Write-Host "".PadRight([Console]::WindowWidth - 1)
+        [Console]::SetCursorPosition(0, $StatusRow)
+    }
 }

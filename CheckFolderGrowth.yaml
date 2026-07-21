@@ -1,0 +1,3 @@
+TargetDirectory: 'C:\Users\brad\.ssh'
+GrowthThresholdMB: 1
+HistoryDays: 1
