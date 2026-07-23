@@ -4,7 +4,7 @@
 # Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope Process
 
 # --- SIDECAR SETTINGS ---
-$SidecarPath = Join-Path $PSScriptRoot "CheckFolderGrowth.yaml"
+$SidecarPath = Join-Path $PSScriptRoot "config.yaml"
 $defaults = @{ TargetDirectory = 'C:\'; GrowthThresholdMB = 100; HistoryDays = 1 }
 
 if (-not (Test-Path $SidecarPath)) {
@@ -49,9 +49,9 @@ $StatusRow = [Console]::CursorTop - 1
 # Move cursor below the status line so results print beneath it
 [Console]::SetCursorPosition(0, $StatusRow + 1)
 
-function Write-Status ($row, $text, $color = 'DarkCyan') {
+function Write-Status ($text, $color = 'DarkCyan') {
     $saved = [Console]::CursorTop
-    [Console]::SetCursorPosition(0, $row)
+    [Console]::SetCursorPosition(0, $script:StatusRow)
     $trimmed = if ($text.Length -gt [Console]::WindowWidth - 1) { $text.Substring(0, [Console]::WindowWidth - 1) } else { $text }
     Write-Host $trimmed.PadRight([Console]::WindowWidth - 1) -ForegroundColor $color -NoNewline
     [Console]::SetCursorPosition(0, $saved)
@@ -62,17 +62,24 @@ $ScanStart = Get-Date
 
 try {
     # Phase 1: Build folder list (streaming, interruptible)
-    Write-Status $StatusRow "$($spinner[0])  Running 0 sec.  Building folder list..."
+    Write-Status "$($spinner[0])  Running 0 sec.  Building folder list..."
     $SubFolders = [System.Collections.Generic.List[string]]::new()
     $i = 0
     $lastUpdate = [datetime]::Now
-    foreach ($dir in [System.IO.Directory]::EnumerateDirectories($TargetDirectory, '*', [System.IO.SearchOption]::AllDirectories)) {
-        $SubFolders.Add($dir)
-        if (([datetime]::Now - $lastUpdate).TotalMilliseconds -ge 250) {
-            $elapsed = [int](New-TimeSpan -Start $ScanStart).TotalSeconds
-            Write-Status $StatusRow "$($spinner[$i % 4])  Running $elapsed sec.  Building folder list... ($($SubFolders.Count) found)"
-            $i++
-            $lastUpdate = [datetime]::Now
+    $queue = [System.Collections.Generic.Queue[string]]::new()
+    $queue.Enqueue($TargetDirectory)
+    while ($queue.Count -gt 0) {
+        $current = $queue.Dequeue()
+        $children = try { [System.IO.Directory]::EnumerateDirectories($current) } catch { continue }
+        foreach ($dir in $children) {
+            $queue.Enqueue($dir)
+            $SubFolders.Add($dir)
+            if (([datetime]::Now - $lastUpdate).TotalMilliseconds -ge 250) {
+                $elapsed = [int](New-TimeSpan -Start $ScanStart).TotalSeconds
+                Write-Status "$($spinner[$i % 4])  Running $elapsed sec.  Building folder list... ($($SubFolders.Count) found)"
+                $i++
+                $lastUpdate = [datetime]::Now
+            }
         }
     }
     $FolderCount = $SubFolders.Count
@@ -84,9 +91,9 @@ try {
     foreach ($Folder in $SubFolders) {
         $FolderIndex++
         $elapsed = [int](New-TimeSpan -Start $ScanStart).TotalSeconds
-        Write-Status $StatusRow "Running $elapsed sec.  Analyzing $FolderIndex of $FolderCount  $($Folder.FullName)"
+        Write-Status "Running $elapsed sec.  Analyzing $FolderIndex of $FolderCount  $Folder"
 
-        $NewFiles = Get-ChildItem -Path $Folder.FullName -File -ErrorAction SilentlyContinue | Where-Object {
+        $NewFiles = Get-ChildItem -Path $Folder -File -ErrorAction SilentlyContinue | Where-Object {
             $_.LastWriteTime -gt $SinceDate -or $_.CreationTime -gt $SinceDate
         }
 
@@ -94,17 +101,20 @@ try {
             $TotalNewMB = [Math]::Round(($NewFiles | Measure-Object -Property Length -Sum).Sum / 1MB, 2)
 
             if ($TotalNewMB -ge $GrowthThresholdMB) {
-                Write-Host "⚠️  $($Folder.FullName)" -ForegroundColor Yellow
+                [Console]::SetCursorPosition(0, $script:StatusRow)
+                Write-Host "⚠️  $Folder" -ForegroundColor Yellow
                 Write-Host "    -> Grew by $TotalNewMB MB in the last $HistoryDays day(s)." -ForegroundColor White
+                $script:StatusRow = [Console]::CursorTop
+                Write-Host ""
                 $FlaggedFoldersCount++
             }
         }
     }
 
     # Clear status line and print summary
-    [Console]::SetCursorPosition(0, $StatusRow)
+    [Console]::SetCursorPosition(0, $script:StatusRow)
     Write-Host "".PadRight([Console]::WindowWidth - 1)
-    [Console]::SetCursorPosition(0, $StatusRow)
+    [Console]::SetCursorPosition(0, $script:StatusRow)
 
     if ($FlaggedFoldersCount -eq 0) {
         Write-Host "Scan complete. No folders grew by more than $GrowthThresholdMB MB." -ForegroundColor Green
@@ -114,8 +124,8 @@ try {
     $completed = $true
 } finally {
     if (-not $completed) {
-        [Console]::SetCursorPosition(0, $StatusRow)
+        [Console]::SetCursorPosition(0, $script:StatusRow)
         Write-Host "".PadRight([Console]::WindowWidth - 1)
-        [Console]::SetCursorPosition(0, $StatusRow)
+        [Console]::SetCursorPosition(0, $script:StatusRow)
     }
 }

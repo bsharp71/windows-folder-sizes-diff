@@ -23,6 +23,11 @@ If you get an execution policy error, run this first in the same session:
 Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope Process
 ```
 
+Single Command
+```powershell
+pwsh -ExecutionPolicy Bypass -File "{path-to-file}\CheckFolderGrowth.ps1"
+```
+
 ## Prompts
 
 On each run the script prompts for three settings. Press Enter to accept the value shown in brackets (the last used value, or the default on first run).
