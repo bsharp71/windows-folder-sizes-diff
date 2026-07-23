@@ -1,4 +1,3 @@
-version: "2.0"
 TargetDirectory: 'C:\Windows\Temp'
 GrowthThresholdMB: 100
 HistoryDays: 1
