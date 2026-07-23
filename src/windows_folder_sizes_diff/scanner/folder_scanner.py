@@ -26,7 +26,7 @@ LOGGER = logging.getLogger(__name__)
 
 
 class FolderScanner:
-    """Run the existing recent-file calculation on a worker thread."""
+    """Measure direct logical folder sizes on a worker thread."""
 
     def __init__(
         self,
@@ -206,6 +206,11 @@ class FolderScanner:
                             matching_bytes=0,
                             direct_file_count=0,
                             matched_file_count=0,
+                            direct_logical_bytes=None,
+                            files_examined=0,
+                            measurement_status=_measurement_status_for_error(exc),
+                            measurement_started_at=datetime.now(),
+                            measurement_completed_at=datetime.now(),
                             scanned_at=datetime.now(),
                             status=_observation_status_for_error(exc),
                             warning_count=1,
@@ -231,8 +236,12 @@ class FolderScanner:
 
     def _analyze_folder(self, folder: Path, cutoff_timestamp: float) -> FolderObservation:
         matching_bytes = 0
+        direct_logical_bytes = 0
         direct_file_count = 0
         matched_file_count = 0
+        files_examined = 0
+        warning_count = 0
+        measurement_started_at = datetime.now()
 
         entries = os.scandir(folder)
         try:
@@ -244,13 +253,16 @@ class FolderScanner:
                 try:
                     stat_result = entry.stat(follow_symlinks=False)
                 except (PermissionError, FileNotFoundError, OSError) as exc:
+                    warning_count += 1
                     self._emit_warning(entry_path, "stat_file", exc)
                     continue
 
                 if not stat.S_ISREG(stat_result.st_mode):
                     continue
 
+                files_examined += 1
                 direct_file_count += 1
+                direct_logical_bytes += stat_result.st_size
                 is_recent = max(stat_result.st_mtime, stat_result.st_ctime) > cutoff_timestamp
                 if is_recent:
                     matching_bytes += stat_result.st_size
@@ -265,7 +277,14 @@ class FolderScanner:
             matching_bytes=matching_bytes,
             direct_file_count=direct_file_count,
             matched_file_count=matched_file_count,
+            direct_logical_bytes=direct_logical_bytes,
+            files_examined=files_examined,
+            measurement_status="partial" if warning_count else "complete",
+            measurement_started_at=measurement_started_at,
+            measurement_completed_at=datetime.now(),
             scanned_at=datetime.now(),
+            status="observed_with_warnings" if warning_count else "observed",
+            warning_count=warning_count,
         )
 
     @staticmethod
@@ -279,3 +298,11 @@ def _observation_status_for_error(exc: BaseException) -> str:
     if isinstance(exc, FileNotFoundError):
         return "disappeared"
     return "enumeration_failed"
+
+
+def _measurement_status_for_error(exc: BaseException) -> str:
+    if isinstance(exc, PermissionError):
+        return "inaccessible"
+    if isinstance(exc, FileNotFoundError):
+        return "disappeared"
+    return "failed"

@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from sqlalchemy.orm import Session, sessionmaker
 
+from windows_folder_sizes_diff.analysis.baseline import BaselineSelector
+from windows_folder_sizes_diff.analysis.differ import ScanDiffer
+from windows_folder_sizes_diff.analysis.models import ScanDiffReport
 from windows_folder_sizes_diff.db.lifecycle import ScanLifecycleService
 from windows_folder_sizes_diff.db.pathing import normalize_windows_path
 from windows_folder_sizes_diff.db.repositories import (
@@ -47,6 +50,8 @@ class ScanPersistenceCoordinator:
         self._files_examined = 0
         self._warnings_seen = 0
         self.final_status: str | None = None
+        self.comparison_status: str | None = None
+        self.diff_report: ScanDiffReport | None = None
 
     @property
     def files_examined(self) -> int:
@@ -57,7 +62,7 @@ class ScanPersistenceCoordinator:
             self._handle_progress(event)
         elif isinstance(event, FolderObserved):
             self._observation_batch.append(event.observation)
-            self._files_examined += event.observation.direct_file_count
+            self._files_examined += event.observation.files_examined or event.observation.direct_file_count
             if len(self._observation_batch) >= self._batch_size:
                 self.flush_observations()
         elif isinstance(event, ScanWarning):
@@ -83,6 +88,7 @@ class ScanPersistenceCoordinator:
                 self.final_status = (
                     "completed_with_warnings" if event.warning_count else "completed"
                 )
+                self._run_comparison()
 
     def flush(self) -> None:
         self.flush_observations()
@@ -142,3 +148,70 @@ class ScanPersistenceCoordinator:
                 files_examined=self._files_examined,
                 warning_count=self._warnings_seen,
             )
+
+    def _run_comparison(self) -> None:
+        selector = BaselineSelector()
+        differ = ScanDiffer()
+        with self._session_factory() as session:
+            selection = selector.find_previous_comparable_scan(session, self.scan_id)
+            if selection.baseline_scan_id is None:
+                self._scans.update_values(
+                    session,
+                    self.scan_id,
+                    {
+                        "baseline_scan_id": None,
+                        "comparison_status": "baseline_created",
+                        "comparison_failure_message": None,
+                    },
+                )
+                session.commit()
+                self.comparison_status = "baseline_created"
+                return
+
+            self._scans.update_values(
+                session,
+                self.scan_id,
+                {
+                    "baseline_scan_id": selection.baseline_scan_id,
+                    "comparison_status": "running",
+                    "comparison_failure_message": None,
+                },
+            )
+            session.commit()
+
+        try:
+            with self._session_factory() as session:
+                self.diff_report = differ.compare(
+                    session,
+                    previous_scan_id=selection.baseline_scan_id,
+                    current_scan_id=self.scan_id,
+                )
+                status = (
+                    "completed_with_warnings"
+                    if self.diff_report.summary.directories_incomplete
+                    else "completed"
+                )
+                self._scans.update_values(
+                    session,
+                    self.scan_id,
+                    {
+                        "baseline_scan_id": selection.baseline_scan_id,
+                        "comparison_status": status,
+                        "comparison_failure_message": None,
+                    },
+                )
+                session.commit()
+                self.comparison_status = status
+        except Exception as exc:
+            with self._session_factory() as session:
+                self._scans.update_values(
+                    session,
+                    self.scan_id,
+                    {
+                        "baseline_scan_id": selection.baseline_scan_id,
+                        "comparison_status": "failed",
+                        "comparison_failure_message": str(exc),
+                    },
+                )
+                session.commit()
+            self.comparison_status = "failed"

@@ -18,6 +18,7 @@ class FakeView:
         self.history_days = "2"
         self.statuses: list[str] = []
         self.results: list[tuple[Path, float, int]] = []
+        self.diff_results = []
         self.running: list[bool] = []
         self.log_path: Path | None = None
         self.scheduled = 0
@@ -37,6 +38,9 @@ class FakeView:
 
     def append_result(self, folder: Path, megabytes: float, history_days: int) -> None:
         self.results.append((folder, megabytes, history_days))
+
+    def append_diff_result(self, diff) -> None:
+        self.diff_results.append(diff)
 
     def set_status(self, message: str) -> None:
         self.statuses.append(message)
@@ -79,7 +83,7 @@ class FakeReportWriter:
         self.report_path = report_path
         self.calls = []
 
-    def write(self, request, completion) -> Path:
+    def write(self, request, completion, **kwargs) -> Path:
         self.calls.append((request, completion))
         self.report_path.write_text("report", encoding="utf-8")
         return self.report_path
@@ -103,7 +107,7 @@ def test_start_scan_creates_request_and_updates_result(tmp_path: Path, monkeypat
     assert scanner.request.growth_threshold_mb == 1
     assert scanner.request.history_days == 2
     assert view.cleared is True
-    assert view.results == [(tmp_path, 2.0, 2)]
+    assert view.results == []
 
 
 def test_completion_triggers_report_and_idle_state(tmp_path: Path, monkeypatch) -> None:

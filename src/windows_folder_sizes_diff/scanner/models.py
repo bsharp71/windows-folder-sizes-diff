@@ -30,6 +30,11 @@ class FolderObservation(BaseModel):
     matching_bytes: int = Field(ge=0)
     direct_file_count: int = Field(ge=0)
     matched_file_count: int = Field(ge=0)
+    direct_logical_bytes: int | None = Field(default=None, ge=0)
+    files_examined: int = Field(default=0, ge=0)
+    measurement_status: str = "complete"
+    measurement_started_at: datetime | None = None
+    measurement_completed_at: datetime | None = None
     scanned_at: datetime
     status: str = "observed"
     warning_count: int = Field(default=0, ge=0)

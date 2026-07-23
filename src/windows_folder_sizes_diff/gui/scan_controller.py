@@ -12,6 +12,7 @@ from pydantic import ValidationError
 from sqlalchemy.orm import Session, sessionmaker
 
 from windows_folder_sizes_diff.config import AppSettings, save_settings
+from windows_folder_sizes_diff.analysis.models import DirectoryDiff
 from windows_folder_sizes_diff.db.lifecycle import ScanLifecycleService, ScanRecord
 from windows_folder_sizes_diff.db.persistence import ScanPersistenceCoordinator
 from windows_folder_sizes_diff.reporting.text_log import TextScanReportWriter
@@ -41,6 +42,8 @@ class ScanView(Protocol):
     def clear_results(self) -> None: ...
 
     def append_result(self, folder: Path, megabytes: float, history_days: int) -> None: ...
+
+    def append_diff_result(self, diff: DirectoryDiff) -> None: ...
 
     def set_status(self, message: str) -> None: ...
 
@@ -183,7 +186,7 @@ class ScanController:
         elif isinstance(event, ScanProgress):
             self._handle_progress(event)
         elif isinstance(event, FolderMatched):
-            self._view.append_result(event.folder, event.matching_megabytes, event.history_days)
+            return
         elif isinstance(event, ScanWarning):
             LOGGER.warning(
                 "%s warning for %s: %s: %s",
@@ -213,7 +216,13 @@ class ScanController:
         if self._request is not None:
             try:
                 report_event = self._completion_with_database_metadata(event)
-                report_path = self._report_writer.write(self._request, report_event)
+                diff_report = self._persistence.diff_report if self._persistence else None
+                self._display_diff_results(diff_report)
+                report_path = self._report_writer.write(
+                    self._request,
+                    report_event,
+                    diff_report=diff_report,
+                )
                 self._view.set_log_path(report_path)
                 suffix = f"  Log: {report_path.name}"
                 LOGGER.info("Report file created: %s", report_path)
@@ -236,7 +245,13 @@ class ScanController:
                 self._view.set_status(f"Scan stopped.{warning_suffix}{suffix}")
         else:
             if self._scan_record is not None:
-                if event.warning_count:
+                comparison_status = self._persistence.comparison_status if self._persistence else None
+                if comparison_status == "baseline_created":
+                    self._view.set_status(
+                        "Baseline scan completed. Run another scan to calculate "
+                        f"folder-size changes.{suffix}"
+                    )
+                elif event.warning_count:
                     self._view.set_status(
                         f"Scan {self._scan_record.id} completed with "
                         f"{event.warning_count} warning(s).{suffix}"
@@ -276,5 +291,24 @@ class ScanController:
                 "scan_id": self._scan_record.id,
                 "scan_uuid": self._scan_record.scan_uuid,
                 "database_status": status,
+                "comparison_status": self._persistence.comparison_status if self._persistence else None,
+                "baseline_scan_id": (
+                    self._persistence.diff_report.summary.previous_scan_id
+                    if self._persistence and self._persistence.diff_report
+                    else None
+                ),
             }
         )
+
+    def _display_diff_results(self, diff_report) -> None:
+        if diff_report is None:
+            return
+        threshold_bytes = self._request.growth_threshold_bytes if self._request else 0
+        for diff in diff_report.results:
+            if diff.delta_bytes is None:
+                continue
+            if abs(diff.delta_bytes) < threshold_bytes:
+                continue
+            if diff.state == "unchanged":
+                continue
+            self._view.append_diff_result(diff)

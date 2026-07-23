@@ -7,6 +7,7 @@ from pathlib import Path
 import customtkinter as ctk
 from sqlalchemy.orm import Session, sessionmaker
 
+from windows_folder_sizes_diff.analysis.models import DirectoryDiff
 from windows_folder_sizes_diff.config import AppSettings
 from windows_folder_sizes_diff.db.lifecycle import ScanLifecycleService
 from windows_folder_sizes_diff.gui.scan_controller import ScanController
@@ -135,6 +136,21 @@ class MainWindow(ctk.CTk):
         self._results.see("end")
         self._results.configure(state="disabled")
 
+    def append_diff_result(self, diff: DirectoryDiff) -> None:
+        previous = _format_mb(diff.previous_bytes)
+        current = _format_mb(diff.current_bytes)
+        change = _format_signed_mb(diff.delta_bytes)
+        self._results.configure(state="normal")
+        self._results.insert(
+            "end",
+            f"{diff.path}\n"
+            f"    Net logical change: {change}\n"
+            f"    Previous direct size: {previous} | Current direct size: {current}\n"
+            f"    State: {diff.state} | Confidence: {diff.confidence}\n\n",
+        )
+        self._results.see("end")
+        self._results.configure(state="disabled")
+
     def set_status(self, message: str) -> None:
         self._status_var.set(message)
 
@@ -147,3 +163,16 @@ class MainWindow(ctk.CTk):
 
     def schedule_after(self, milliseconds: int, callback) -> None:
         self.after(milliseconds, callback)
+
+
+def _format_mb(value: int | None) -> str:
+    if value is None:
+        return "unknown"
+    return f"{round(value / 1024 / 1024, 2)} MB"
+
+
+def _format_signed_mb(value: int | None) -> str:
+    if value is None:
+        return "unknown"
+    sign = "+" if value > 0 else ""
+    return f"{sign}{round(value / 1024 / 1024, 2)} MB"

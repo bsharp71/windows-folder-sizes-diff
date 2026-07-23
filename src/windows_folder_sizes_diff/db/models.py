@@ -16,6 +16,8 @@ class Scan(Base):
     __table_args__ = (
         Index("ix_scans_status_started_at", "status", "started_at"),
         Index("ix_scans_normalized_target_started_at", "normalized_target_path", "started_at"),
+        Index("ix_scans_target_config_completed", "normalized_target_path", "configuration_hash", "completed_at"),
+        Index("ix_scans_status_completed", "status", "completed_at"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -35,6 +37,10 @@ class Scan(Base):
     warning_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     cancel_requested: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     failure_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    measurement_algorithm_version: Mapped[int] = mapped_column(Integer, nullable=False, default=2)
+    baseline_scan_id: Mapped[int | None] = mapped_column(ForeignKey("scans.id"), nullable=True)
+    comparison_status: Mapped[str] = mapped_column(String(32), nullable=False, default="not_started")
+    comparison_failure_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
 
@@ -83,6 +89,11 @@ class DirectoryObservation(Base):
     matching_bytes: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     direct_file_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     matched_file_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    direct_logical_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    measurement_status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
+    files_examined: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    measurement_started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    measurement_completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     observed_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False)
     warning_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

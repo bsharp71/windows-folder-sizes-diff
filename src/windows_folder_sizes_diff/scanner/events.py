@@ -52,6 +52,8 @@ class ScanCompleted(BaseModel):
     scan_id: int = 0
     scan_uuid: str | None = None
     database_status: str | None = None
+    comparison_status: str | None = None
+    baseline_scan_id: int | None = None
     started_at: datetime
     completed_at: datetime
     cancelled: bool

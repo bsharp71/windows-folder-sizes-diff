@@ -57,5 +57,5 @@ def test_fresh_database_upgrades_to_head_and_has_expected_tables(tmp_path: Path)
         "alembic_version",
     }.issubset(tables)
     assert "ix_directory_observations_scan_directory" in indexes
-    assert current == "0001_phase_1"
+    assert current == "0002_phase_2"
     assert_schema_current(engine, database_path)
