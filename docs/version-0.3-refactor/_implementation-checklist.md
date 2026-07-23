@@ -1,6 +1,6 @@
 
 2026-07-23
-App has been implemented through phase 2.1 using Codex and GPT-5.5 with high reasoning.
+App has been implemented through phase 3 using Codex and GPT-5.5 with high reasoning.  Except Phase 3 was done with DeepSeek v4 Pro and then audited with GPT 5.5 to fix things.
 
 | Done | Phase | Implementation                                                 | Branch                              |
 | ---- | ----- | -------------------------------------------------------------- | ----------------------------------- |
