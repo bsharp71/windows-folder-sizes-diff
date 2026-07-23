@@ -1,3 +1,4 @@
 **/RUNNING-THE-SCRIPT.md
 /logs/*.log
 .venv
+*/__pycache__
