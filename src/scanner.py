@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 
-SIDECAR_PATH = Path(__file__).parent.parent / "CheckFolderGrowth.yaml"
+SIDECAR_PATH = Path(__file__).parent.parent / "config.yaml"
 LOGS_DIR = Path(__file__).parent.parent / "logs"
 DEFAULTS = {"TargetDirectory": "C:\\", "GrowthThresholdMB": 100, "HistoryDays": 1}
 
