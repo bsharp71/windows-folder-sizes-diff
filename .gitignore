@@ -1,4 +1,7 @@
 **/RUNNING-THE-SCRIPT.md
 /logs/*.log
+/data/*.db
+/data/*.db-shm
+/data/*.db-wal
 .venv
 **/__pycache__

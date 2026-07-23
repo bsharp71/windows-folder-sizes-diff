@@ -1,3 +1,4 @@
 TargetDirectory: 'C:\Windows\Temp'
 GrowthThresholdMB: 100
 HistoryDays: 1
+DatabasePath: 'data\folder_sizes.db'

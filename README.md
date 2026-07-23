@@ -1,8 +1,8 @@
 # Folder Growth Scanner
 
-A Windows desktop app that scans a directory tree and reports folders whose contents have grown beyond a specified size threshold within a given time range.
+A Windows desktop app that scans a directory tree and reports folders whose direct child files have recent timestamp activity above a configured size threshold.
 
-Useful for tracking down unexpected disk usage — finding which folders ballooned overnight, or identifying a runaway cache or log directory over the past week.
+Useful for tracking down likely sources of recent disk usage, such as active caches or log directories. Phase 1 stores durable scan history, but it does not yet calculate true snapshot-based growth.
 
 ## Requirements
 
@@ -13,12 +13,21 @@ Useful for tracking down unexpected disk usage — finding which folders balloon
 
 ```
 uv sync
+uv run alembic upgrade head
 ```
+
+The Alembic command creates or upgrades the SQLite database schema.
 
 ## Running
 
 ```
-uv run src/main.py
+uv run folder-diff
+```
+
+The legacy command still works:
+
+```
+uv run python src/main.py
 ```
 
 ## Usage
@@ -37,7 +46,7 @@ Click **Stop** at any time to cancel a running scan.
 
 ## Output
 
-The results pane lists each flagged folder and how much it grew:
+The results pane lists each flagged folder and the current logical size of direct child files whose modification or creation timestamp is inside the selected history window:
 
 ```
 ⚠  C:\Users\brad\AppData\Local\Temp\SomeApp
@@ -46,9 +55,42 @@ The results pane lists each flagged folder and how much it grew:
 
 A status bar at the bottom shows live progress during the scan.
 
+## Database
+
+Phase 1 stores scan history in SQLite at:
+
+```
+data/folder_sizes.db
+```
+
+Change the location by adding or editing `DatabasePath` in `config.yaml`:
+
+```
+DatabasePath: 'data/folder_sizes.db'
+```
+
+The app checks that the database schema is current at startup. If it is missing or outdated, run:
+
+```
+uv run alembic upgrade head
+```
+
+Cancelled scans keep any observations that were already committed and are marked `cancelled`. Scans left `pending` or `running` from an interrupted app session are marked `interrupted` on the next startup and are not treated as completed history.
+
+## CLI
+
+Inspect the database with:
+
+```
+uv run folder-diff-cli db-info
+uv run folder-diff-cli scans
+uv run folder-diff-cli scan-show <scan-id>
+uv run folder-diff-cli warnings --scan-id <scan-id>
+```
+
 ## Log Files
 
-Each run that finds at least one matching folder writes a timestamped log to the `logs/` directory:
+Each run writes a timestamped report to the `logs/` directory:
 
 ```
 logs/scan_2025-07-23_14-30-00.log
@@ -58,7 +100,7 @@ The **Show Log** button becomes active at the end of a run when a log file was w
 
 ## Settings Persistence
 
-Settings are saved to `CheckFolderGrowth.yaml` in the project root after each run and restored on next launch.
+Settings are saved to `config.yaml` in the project root after each run and restored on next launch.
 
 ## Legacy PowerShell Version
 

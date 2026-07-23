@@ -1,5 +1,25 @@
 # Phase 2 Technical Specification
 
+Implement Phase 2 using the attached specification as the governing document.
+
+Before changing code:
+
+1. Inspect the current repository and confirm the prerequisite phases are present.
+2. Identify any conflicts or assumptions that differ from the specification.
+3. Create a concise implementation checklist mapped to the acceptance criteria.
+4. Implement only Phase 2. Do not begin later-phase features.
+5. Run the complete test suite and report any failures.
+6. At completion, provide:
+
+   * files added or changed;
+   * architectural decisions made;
+   * migrations or commands I must run;
+   * test results;
+   * acceptance criteria not fully satisfied;
+   * any technical debt deferred to the next phase.
+
+Preserve existing working behavior unless the specification explicitly changes it.
+
 ## True Snapshot-Based Folder Size Differences
 
 **Project:** `windows-folder-sizes-diff`
