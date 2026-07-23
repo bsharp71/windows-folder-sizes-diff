@@ -1768,9 +1768,10 @@ Do not attempt all phases in one branch.
 Recommended branch sequence:
 
 ```text
-refactor/modular-foundation
-feature/sqlite-snapshots
-feature/true-scan-diffs
+refactor/modular-foundation-july-23 <- Phases 0 and 1 
+feature/sqlite-snapshots <- This branch does not exist.  
+feature/true-scan-diffs-july-23
+feature/2.1-add-menu-bar-july-23  <- Added after initial refactor design
 feature/hierarchical-sizes
 feature/reparse-protection
 feature/volume-reconciliation

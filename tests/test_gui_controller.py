@@ -20,6 +20,7 @@ class FakeView:
         self.results: list[tuple[Path, float, int]] = []
         self.diff_results = []
         self.running: list[bool] = []
+        self.cancellation_requested: list[bool] = []
         self.log_path: Path | None = None
         self.scheduled = 0
         self.cleared = False
@@ -42,11 +43,17 @@ class FakeView:
     def append_diff_result(self, diff) -> None:
         self.diff_results.append(diff)
 
+    def display_diff_report(self, diff_report) -> None:
+        self.diff_results.extend(diff_report.results)
+
     def set_status(self, message: str) -> None:
         self.statuses.append(message)
 
     def set_running(self, running: bool) -> None:
         self.running.append(running)
+
+    def set_cancellation_requested(self, requested: bool) -> None:
+        self.cancellation_requested.append(requested)
 
     def set_log_path(self, path: Path | None) -> None:
         self.log_path = path
@@ -151,7 +158,8 @@ def test_cancellation_delegates_to_scanner(tmp_path: Path, monkeypatch) -> None:
     controller.cancel_scan()
 
     assert FakeScanner.instances[0].stopped is True
-    assert view.statuses[-1] == "Stopping scan..."
+    assert view.cancellation_requested[-1] is True
+    assert view.statuses[-1] == "Cancelling…"
 
 
 def test_controller_persists_scan_events(

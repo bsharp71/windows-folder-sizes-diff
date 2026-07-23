@@ -10,7 +10,10 @@ from sqlalchemy.orm import Session, sessionmaker
 from windows_folder_sizes_diff.analysis.models import DirectoryDiff
 from windows_folder_sizes_diff.config import AppSettings
 from windows_folder_sizes_diff.db.lifecycle import ScanLifecycleService
+from windows_folder_sizes_diff.gui.actions import ApplicationActions
+from windows_folder_sizes_diff.gui.menu_bar import ApplicationMenuBar
 from windows_folder_sizes_diff.gui.scan_controller import ScanController
+from windows_folder_sizes_diff.gui.state import ApplicationState, ComparisonViewFilters
 
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
@@ -32,13 +35,27 @@ class MainWindow(ctk.CTk):
         self.minsize(640, 480)
         self._settings = settings
         self._last_log_path: Path | None = None
+        self._application_state = ApplicationState()
+        self._view_filters = ComparisonViewFilters()
         self._controller = ScanController(
             self,
             session_factory=session_factory,
             lifecycle_service=lifecycle_service,
             database_path=settings.database_path,
         )
+        self._actions = ApplicationActions(
+            self,
+            filters=self._view_filters,
+            state=self._application_state,
+            session_factory=session_factory,
+            database_path=settings.database_path,
+        )
+        self._menu_bar: ApplicationMenuBar | None = None
         self._build_ui()
+        self._menu_bar = ApplicationMenuBar(self, self._actions, self._view_filters)
+        self.protocol("WM_DELETE_WINDOW", self._actions.exit_application)
+        self.update_command_states()
+        self._actions.refresh_application_state()
 
     def run(self) -> None:
         self.mainloop()
@@ -75,20 +92,20 @@ class MainWindow(ctk.CTk):
 
         self._start_btn = ctk.CTkButton(
             settings_frame,
-            text="Start",
+            text="Run Scan",
             width=80,
-            command=self._controller.start_or_stop,
+            command=self._actions.run_scan,
         )
         self._start_btn.grid(row=0, column=7, padx=(12, 4), pady=8)
 
-        self._log_btn = ctk.CTkButton(
+        self._cancel_btn = ctk.CTkButton(
             settings_frame,
-            text="Show Log",
+            text="Cancel Scan",
             width=90,
-            state="disabled",
-            command=lambda: self._controller.show_log(self._last_log_path),
+            command=self._actions.cancel_scan,
         )
-        self._log_btn.grid(row=0, column=8, padx=(4, 10), pady=8)
+        self._cancel_btn.grid(row=0, column=8, padx=(4, 10), pady=8)
+        self._cancel_btn.grid_remove()
 
         self._results = ctk.CTkTextbox(self, font=("Consolas", 12), wrap="none")
         self._results.grid(row=1, column=0, padx=12, pady=6, sticky="nsew")
@@ -140,39 +157,89 @@ class MainWindow(ctk.CTk):
         previous = _format_mb(diff.previous_bytes)
         current = _format_mb(diff.current_bytes)
         change = _format_signed_mb(diff.delta_bytes)
+        state = _format_state(diff.state)
         self._results.configure(state="normal")
         self._results.insert(
             "end",
             f"{diff.path}\n"
             f"    Net logical change: {change}\n"
             f"    Previous direct size: {previous} | Current direct size: {current}\n"
-            f"    State: {diff.state} | Confidence: {diff.confidence}\n\n",
+            f"    State: {state} | Confidence: {diff.confidence}\n\n",
         )
         self._results.see("end")
         self._results.configure(state="disabled")
+
+    def display_diff_report(self, diff_report) -> None:
+        self._actions.display_comparison_report(diff_report)
 
     def set_status(self, message: str) -> None:
         self._status_var.set(message)
 
     def set_running(self, running: bool) -> None:
-        self._start_btn.configure(text="Stop" if running else "Start")
+        self._application_state.scan_active = running
+        if running:
+            self._application_state.cancellation_requested = False
+        else:
+            self._application_state.cancellation_requested = False
+        self.update_command_states()
+        if not running:
+            self._actions.refresh_application_state()
+
+    def set_cancellation_requested(self, requested: bool) -> None:
+        self._application_state.cancellation_requested = requested
+        self.update_command_states()
 
     def set_log_path(self, path: Path | None) -> None:
         self._last_log_path = path
-        self._log_btn.configure(state="normal" if path is not None else "disabled")
 
     def schedule_after(self, milliseconds: int, callback) -> None:
         self.after(milliseconds, callback)
 
+    def update_command_states(self) -> None:
+        can_run = (
+            not self._application_state.scan_active
+            and not self._application_state.cancellation_requested
+            and not self._application_state.shutting_down
+        )
+        self._start_btn.configure(state="normal" if can_run else "disabled")
+        show_cancel = (
+            self._application_state.scan_active
+            or self._application_state.cancellation_requested
+        )
+        if show_cancel:
+            self._cancel_btn.grid()
+            self._cancel_btn.configure(
+                state="disabled" if self._application_state.cancellation_requested else "normal"
+            )
+        else:
+            self._cancel_btn.grid_remove()
+        if self._menu_bar is not None:
+            self._menu_bar.update_state(
+                self._application_state,
+                has_result_view=self._actions.current_report is not None,
+            )
+            self._menu_bar.sync_filter_variables()
+
 
 def _format_mb(value: int | None) -> str:
     if value is None:
-        return "unknown"
+        return "Unavailable"
     return f"{round(value / 1024 / 1024, 2)} MB"
 
 
 def _format_signed_mb(value: int | None) -> str:
     if value is None:
-        return "unknown"
+        return "Unavailable"
     sign = "+" if value > 0 else ""
     return f"{sign}{round(value / 1024 / 1024, 2)} MB"
+
+
+def _format_state(value: str) -> str:
+    return {
+        "grown": "Grown",
+        "reduced": "Reduced",
+        "new": "New",
+        "removed": "Removed",
+        "incomplete": "Incomplete",
+        "not_comparable": "Not comparable",
+    }.get(value, value)

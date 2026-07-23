@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import subprocess
 from pathlib import Path
 from queue import Empty, Queue
 from typing import Protocol
@@ -45,9 +44,13 @@ class ScanView(Protocol):
 
     def append_diff_result(self, diff: DirectoryDiff) -> None: ...
 
+    def display_diff_report(self, diff_report) -> None: ...
+
     def set_status(self, message: str) -> None: ...
 
     def set_running(self, running: bool) -> None: ...
+
+    def set_cancellation_requested(self, requested: bool) -> None: ...
 
     def set_log_path(self, path: Path | None) -> None: ...
 
@@ -79,18 +82,15 @@ class ScanController:
         self._scan_record: ScanRecord | None = None
         self._persistence: ScanPersistenceCoordinator | None = None
         self._polling = False
+        self._cancellation_requested = False
 
     @property
     def is_running(self) -> bool:
         return self._scanner is not None
 
-    def start_or_stop(self) -> None:
-        if self._scanner is not None:
-            self.cancel_scan()
-            return
-        self.start_scan()
-
     def start_scan(self) -> None:
+        if self._scanner is not None:
+            return
         try:
             request = self._create_request()
         except (ValueError, ValidationError) as exc:
@@ -133,9 +133,11 @@ class ScanController:
             event_sink=self._event_queue.put,
             scan_id=scan_id,
         )
+        self._cancellation_requested = False
         self._view.clear_results()
         self._view.set_log_path(None)
         self._view.set_running(True)
+        self._view.set_cancellation_requested(False)
         if self._scan_record is not None:
             self._view.set_status(f"Scan {self._scan_record.id} started.")
         else:
@@ -147,8 +149,12 @@ class ScanController:
     def cancel_scan(self) -> None:
         if self._scanner is None:
             return
+        if self._cancellation_requested:
+            return
+        self._cancellation_requested = True
         self._scanner.stop()
-        self._view.set_status("Stopping scan...")
+        self._view.set_cancellation_requested(True)
+        self._view.set_status("Cancelling…")
 
     def process_pending_events(self) -> None:
         queue = self._event_queue
@@ -165,10 +171,6 @@ class ScanController:
 
         if self._polling:
             self._view.schedule_after(100, self.process_pending_events)
-
-    def show_log(self, path: Path | None) -> None:
-        if path and path.exists():
-            subprocess.Popen(["notepad.exe", str(path)])
 
     def _create_request(self) -> ScanRequest:
         threshold = int(self._view.get_threshold_mb().strip())
@@ -210,7 +212,9 @@ class ScanController:
     def _handle_completion(self, event: ScanCompleted) -> None:
         self._polling = False
         self._scanner = None
+        self._cancellation_requested = False
         self._view.set_running(False)
+        self._view.set_cancellation_requested(False)
 
         suffix = ""
         if self._request is not None:
@@ -303,12 +307,4 @@ class ScanController:
     def _display_diff_results(self, diff_report) -> None:
         if diff_report is None:
             return
-        threshold_bytes = self._request.growth_threshold_bytes if self._request else 0
-        for diff in diff_report.results:
-            if diff.delta_bytes is None:
-                continue
-            if abs(diff.delta_bytes) < threshold_bytes:
-                continue
-            if diff.state == "unchanged":
-                continue
-            self._view.append_diff_result(diff)
+        self._view.display_diff_report(diff_report)

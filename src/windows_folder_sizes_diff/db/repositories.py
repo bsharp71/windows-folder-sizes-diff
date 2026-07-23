@@ -71,6 +71,25 @@ class ScanRepository:
     def count(self, session: Session) -> int:
         return int(session.scalar(select(func.count()).select_from(Scan)) or 0)
 
+    def latest(self, session: Session) -> Scan | None:
+        statement = select(Scan).order_by(Scan.started_at.desc()).limit(1)
+        return session.scalar(statement)
+
+    def latest_completed_comparison(self, session: Session) -> Scan | None:
+        statement = (
+            select(Scan)
+            .where(
+                Scan.comparison_status.in_(["completed", "completed_with_warnings"]),
+                Scan.baseline_scan_id.is_not(None),
+            )
+            .order_by(Scan.completed_at.desc(), Scan.started_at.desc())
+            .limit(1)
+        )
+        return session.scalar(statement)
+
+    def has_completed_comparison(self, session: Session) -> bool:
+        return self.latest_completed_comparison(session) is not None
+
 
 class DirectoryRepository:
     """Path-based directory identity operations."""
@@ -222,6 +241,12 @@ class WarningRepository:
 
     def count(self, session: Session) -> int:
         return int(session.scalar(select(func.count()).select_from(ScanWarningRecord)) or 0)
+
+    def count_for_scan(self, session: Session, scan_id: int) -> int:
+        statement = select(func.count()).select_from(ScanWarningRecord).where(
+            ScanWarningRecord.scan_id == scan_id
+        )
+        return int(session.scalar(statement) or 0)
 
 
 class VolumeObservationRepository:
