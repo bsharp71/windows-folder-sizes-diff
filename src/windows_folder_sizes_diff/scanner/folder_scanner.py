@@ -97,8 +97,8 @@ class FolderScanner:
         )
 
         try:
-            folders = self._discover_folders(started_at)
-            folders_scanned, results = self._analyze_folders(folders, started_at)
+            hierarchy = self._discover_folders(started_at)
+            folders_scanned, results = self._analyze_folders(hierarchy, started_at)
         except Exception:
             LOGGER.exception("Unexpected scanner failure")
             raise
@@ -125,15 +125,17 @@ class FolderScanner:
                 self._emit(completion)
                 completed = True
 
-    def _discover_folders(self, started_at: datetime) -> list[Path]:
-        folders: list[Path] = [self._request.target_directory]
-        pending: deque[Path] = deque([self._request.target_directory])
+    def _discover_folders(self, started_at: datetime) -> dict[Path, tuple[Path | None, int]]:
+        """Discover all folders and return {path: (parent_path, depth)} mapping."""
+        root = self._request.target_directory
+        hierarchy: dict[Path, tuple[Path | None, int]] = {root: (None, 0)}
+        pending: deque[tuple[Path, Path | None, int]] = deque([(root, None, 0)])
 
         while pending:
             if self._stop_event.is_set():
                 break
 
-            current = pending.popleft()
+            current, _parent, depth = pending.popleft()
             try:
                 entries = os.scandir(current)
                 try:
@@ -143,8 +145,8 @@ class FolderScanner:
                         try:
                             if entry.is_dir(follow_symlinks=False):
                                 child = Path(entry.path)
-                                pending.append(child)
-                                folders.append(child)
+                                hierarchy[child] = (current, depth + 1)
+                                pending.append((child, current, depth + 1))
                         except (PermissionError, FileNotFoundError, OSError) as exc:
                             self._emit_warning(Path(entry.path), "enumerate_directory", exc)
                 finally:
@@ -158,24 +160,31 @@ class FolderScanner:
                 ScanProgress(
                     scan_id=self._scan_id,
                     phase="build_folder_list",
-                    current=len(folders),
-                    folders_found=len(folders),
+                    current=len(hierarchy),
+                    folders_found=len(hierarchy),
                     elapsed_seconds=self._elapsed_seconds(started_at),
                     current_path=current,
                 )
             )
 
-        return folders
+        return hierarchy
 
     def _analyze_folders(
         self,
-        folders: list[Path],
+        hierarchy: dict[Path, tuple[Path | None, int]],
         started_at: datetime,
     ) -> tuple[int, list[FolderMatched]]:
         results: list[FolderMatched] = []
         cutoff_timestamp = (datetime.now() - timedelta(days=self._request.history_days)).timestamp()
+        folders = list(hierarchy.keys())
         total = len(folders)
         folders_scanned = 0
+
+        # Pre-compute direct child counts for each folder
+        child_counts: dict[Path, int] = {p: 0 for p in folders}
+        for child_path, (parent_path, _depth) in hierarchy.items():
+            if parent_path is not None:
+                child_counts[parent_path] = child_counts.get(parent_path, 0) + 1
 
         for index, folder in enumerate(folders, 1):
             if self._stop_event.is_set():
@@ -193,8 +202,11 @@ class FolderScanner:
                 )
             )
 
+            parent_path, depth = hierarchy[folder]
+            direct_child_count = child_counts.get(folder, 0)
+
             try:
-                observation = self._analyze_folder(folder, cutoff_timestamp)
+                observation = self._analyze_folder(folder, cutoff_timestamp, parent_path, depth, direct_child_count)
             except (PermissionError, FileNotFoundError, OSError) as exc:
                 folders_scanned += 1
                 self._emit_warning(folder, "analyze_folder", exc)
@@ -203,10 +215,13 @@ class FolderScanner:
                         scan_id=self._scan_id,
                         observation=FolderObservation(
                             path=folder,
+                            parent_path=parent_path,
+                            depth=depth,
                             matching_bytes=0,
                             direct_file_count=0,
                             matched_file_count=0,
                             direct_logical_bytes=None,
+                            direct_child_count=direct_child_count,
                             files_examined=0,
                             measurement_status=_measurement_status_for_error(exc),
                             measurement_started_at=datetime.now(),
@@ -234,7 +249,10 @@ class FolderScanner:
 
         return folders_scanned, results
 
-    def _analyze_folder(self, folder: Path, cutoff_timestamp: float) -> FolderObservation:
+    def _analyze_folder(
+        self, folder: Path, cutoff_timestamp: float,
+        parent_path: Path | None = None, depth: int = 0, direct_child_count: int = 0,
+    ) -> FolderObservation:
         matching_bytes = 0
         direct_logical_bytes = 0
         direct_file_count = 0
@@ -274,10 +292,13 @@ class FolderScanner:
 
         return FolderObservation(
             path=folder,
+            parent_path=parent_path,
+            depth=depth,
             matching_bytes=matching_bytes,
             direct_file_count=direct_file_count,
             matched_file_count=matched_file_count,
             direct_logical_bytes=direct_logical_bytes,
+            direct_child_count=direct_child_count,
             files_examined=files_examined,
             measurement_status="partial" if warning_count else "complete",
             measurement_started_at=measurement_started_at,

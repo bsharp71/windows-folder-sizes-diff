@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import logging
+
 from sqlalchemy.orm import Session, sessionmaker
 
 from windows_folder_sizes_diff.analysis.baseline import BaselineSelector
 from windows_folder_sizes_diff.analysis.differ import ScanDiffer
+from windows_folder_sizes_diff.analysis.hierarchy import HierarchyAggregator
 from windows_folder_sizes_diff.analysis.models import ScanDiffReport
 from windows_folder_sizes_diff.db.lifecycle import ScanLifecycleService
+from windows_folder_sizes_diff.db.pathing import normalize_windows_path
 from windows_folder_sizes_diff.db.pathing import normalize_windows_path
 from windows_folder_sizes_diff.db.repositories import (
     DirectoryRepository,
@@ -23,6 +27,8 @@ from windows_folder_sizes_diff.scanner.events import (
     ScanWarning,
 )
 from windows_folder_sizes_diff.scanner.models import FolderObservation
+
+LOGGER = logging.getLogger(__name__)
 
 
 class ScanPersistenceCoordinator:
@@ -100,10 +106,20 @@ class ScanPersistenceCoordinator:
         batch = self._observation_batch
         self._observation_batch = []
         with self._session_factory() as session:
+            # Build parent and depth maps from observations
+            parent_map: dict[str, str | None] = {}
+            depth_map: dict[str, int] = {}
+            for obs in batch:
+                normalized = normalize_windows_path(obs.path)
+                parent_map[normalized] = normalize_windows_path(obs.parent_path) if obs.parent_path else None
+                depth_map[normalized] = obs.depth
+
             directory_ids = self._directories.ensure_many(
                 session,
                 [observation.path for observation in batch],
                 scan_id=self.scan_id,
+                parent_map=parent_map,
+                depth_map=depth_map,
             )
             self._observations.insert_many(
                 session,
@@ -152,6 +168,37 @@ class ScanPersistenceCoordinator:
     def _run_comparison(self) -> None:
         selector = BaselineSelector()
         differ = ScanDiffer()
+        aggregator = HierarchyAggregator()
+
+        # Step 1: Run hierarchy aggregation for the current scan
+        hierarchy_ok = True
+        try:
+            with self._session_factory() as session:
+                agg_result = aggregator.aggregate_scan(session, self.scan_id)
+                session.commit()
+                LOGGER.info(
+                    "Hierarchy aggregation for scan %s: %s (complete=%s partial=%s orphaned=%s)",
+                    self.scan_id,
+                    agg_result.status,
+                    agg_result.complete_directories,
+                    agg_result.partial_directories,
+                    agg_result.orphaned_directories,
+                )
+        except Exception as exc:
+            LOGGER.exception("Hierarchy aggregation failed for scan %s", self.scan_id)
+            hierarchy_ok = False
+            with self._session_factory() as session:
+                self._scans.update_values(
+                    session,
+                    self.scan_id,
+                    {
+                        "hierarchy_aggregation_status": "failed",
+                        "direct_measurement_status": "completed",
+                    },
+                )
+                session.commit()
+
+        # Step 2: Run comparison
         with self._session_factory() as session:
             selection = selector.find_previous_comparable_scan(session, self.scan_id)
             if selection.baseline_scan_id is None:
@@ -162,6 +209,7 @@ class ScanPersistenceCoordinator:
                         "baseline_scan_id": None,
                         "comparison_status": "baseline_created",
                         "comparison_failure_message": None,
+                        "direct_measurement_status": "completed",
                     },
                 )
                 session.commit()
@@ -198,6 +246,7 @@ class ScanPersistenceCoordinator:
                         "baseline_scan_id": selection.baseline_scan_id,
                         "comparison_status": status,
                         "comparison_failure_message": None,
+                        "direct_measurement_status": "completed",
                     },
                 )
                 session.commit()

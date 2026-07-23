@@ -38,9 +38,12 @@ class Scan(Base):
     cancel_requested: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     failure_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     measurement_algorithm_version: Mapped[int] = mapped_column(Integer, nullable=False, default=2)
+    hierarchy_algorithm_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     baseline_scan_id: Mapped[int | None] = mapped_column(ForeignKey("scans.id"), nullable=True)
     comparison_status: Mapped[str] = mapped_column(String(32), nullable=False, default="not_started")
     comparison_failure_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    direct_measurement_status: Mapped[str] = mapped_column(String(32), nullable=False, default="not_started")
+    hierarchy_aggregation_status: Mapped[str] = mapped_column(String(32), nullable=False, default="not_started")
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
 
@@ -61,12 +64,18 @@ class Scan(Base):
 
 class Directory(Base):
     __tablename__ = "directories"
-    __table_args__ = (Index("ix_directories_normalized_path", "normalized_path"),)
+    __table_args__ = (
+        Index("ix_directories_normalized_path", "normalized_path"),
+        Index("ix_directories_parent_directory_id", "parent_directory_id"),
+        Index("ix_directories_depth", "depth"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     normalized_path: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
     display_path: Mapped[str] = mapped_column(Text, nullable=False)
     parent_normalized_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    parent_directory_id: Mapped[int | None] = mapped_column(ForeignKey("directories.id"), nullable=True)
+    depth: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     first_seen_scan_id: Mapped[int] = mapped_column(ForeignKey("scans.id"), nullable=False)
     last_seen_scan_id: Mapped[int] = mapped_column(ForeignKey("scans.id"), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
@@ -90,7 +99,12 @@ class DirectoryObservation(Base):
     direct_file_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     matched_file_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     direct_logical_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    inclusive_logical_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    inclusive_file_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    direct_child_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    descendant_directory_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     measurement_status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
+    hierarchy_status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
     files_examined: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     measurement_started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     measurement_completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

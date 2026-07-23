@@ -44,6 +44,8 @@ class ActionView(Protocol):
 
     def append_diff_result(self, diff: DirectoryDiff) -> None: ...
 
+    def set_result_view_mode(self, mode: str) -> None: ...
+
     def set_status(self, message: str) -> None: ...
 
     def get_threshold_mb(self) -> str: ...
@@ -238,8 +240,10 @@ class ApplicationActions:
             application_name="Folder Growth Scanner",
             version=_application_version(),
             python_requirement=">=3.12",
-            schema_revision="0002_phase_2_snapshot_differences",
-            measurement_mode="Direct logical folder-size snapshots with scan-to-scan comparison",
+            schema_revision="0003_phase_3",
+            measurement_mode=(
+                "Direct logical folder-size snapshots with inclusive hierarchy aggregation"
+            ),
             database_path=str(resolve_database_path(self._database_path)),
         )
 
@@ -275,6 +279,7 @@ class ApplicationActions:
         self._filters.show_reductions = filters.show_reductions
         self._filters.show_new_removed = filters.show_new_removed
         self._filters.show_incomplete = filters.show_incomplete
+        self._filters.view_mode = filters.view_mode
         LOGGER.info("view filter changed")
         self._render_filtered_results()
 
@@ -375,18 +380,22 @@ class ApplicationActions:
         if self._current_report is None:
             self._view.update_command_states()
             return
+        self._view.set_result_view_mode(self._filters.view_mode)
         rows = filter_diffs(self._current_report.results, self._filters)
+        if self._filters.view_mode == "tree":
+            rows = tree_order_diffs(rows)
         threshold_bytes = self._threshold_bytes()
         shown = 0
         for diff in rows:
-            if diff.delta_bytes is not None and abs(diff.delta_bytes) < threshold_bytes:
+            if _is_below_threshold(diff, threshold_bytes, self._filters.view_mode):
                 continue
             self._view.append_diff_result(diff)
             shown += 1
         summary = self._current_report.summary
+        mode_label = "folder tree" if self._filters.view_mode == "tree" else "direct growth"
         self._view.set_status(
             f"Comparison {summary.previous_scan_id} -> {summary.current_scan_id}: "
-            f"{shown} row(s) shown."
+            f"{shown} row(s) shown in {mode_label} view."
         )
         self._view.update_command_states()
 
@@ -419,17 +428,65 @@ def filter_diffs(
 
     rows: list[DirectoryDiff] = []
     for diff in diffs:
-        if diff.state == "grown" and filters.show_growth:
+        if _matches_direct_filter(diff, filters):
             rows.append(diff)
-        elif diff.state == "reduced" and filters.show_reductions:
-            rows.append(diff)
-        elif diff.state in {"new", "removed"} and filters.show_new_removed:
-            rows.append(diff)
-        elif (
-            diff.state in {"incomplete", "not_comparable"} or diff.delta_bytes is None
-        ) and filters.show_incomplete:
+        elif filters.view_mode == "tree" and _matches_inclusive_tree_filter(diff, filters):
             rows.append(diff)
     return rows
+
+
+def tree_order_diffs(diffs: list[DirectoryDiff]) -> list[DirectoryDiff]:
+    """Return rows in parent-before-child order for the folder tree view."""
+
+    by_id = {diff.directory_id: diff for diff in diffs}
+    children: dict[int | None, list[DirectoryDiff]] = {}
+    for diff in diffs:
+        parent_id = diff.parent_directory_id
+        if parent_id not in by_id:
+            parent_id = None
+        children.setdefault(parent_id, []).append(diff)
+
+    for siblings in children.values():
+        siblings.sort(key=lambda item: (item.path.as_posix().casefold(), item.directory_id))
+
+    ordered: list[DirectoryDiff] = []
+    stack = list(reversed(children.get(None, [])))
+    while stack:
+        diff = stack.pop()
+        ordered.append(diff)
+        stack.extend(reversed(children.get(diff.directory_id, [])))
+    return ordered
+
+
+def _matches_direct_filter(diff: DirectoryDiff, filters: ComparisonViewFilters) -> bool:
+    if diff.state == "grown" and filters.show_growth:
+        return True
+    if diff.state == "reduced" and filters.show_reductions:
+        return True
+    if diff.state in {"new", "removed"} and filters.show_new_removed:
+        return True
+    return bool(
+        (diff.state in {"incomplete", "not_comparable"} or diff.direct_delta_bytes is None)
+        and filters.show_incomplete
+    )
+
+
+def _matches_inclusive_tree_filter(diff: DirectoryDiff, filters: ComparisonViewFilters) -> bool:
+    delta = diff.inclusive_delta_bytes
+    if delta is None:
+        return filters.show_incomplete and diff.inclusive_confidence == "unavailable"
+    if delta > 0:
+        return filters.show_growth
+    if delta < 0:
+        return filters.show_reductions
+    return False
+
+
+def _is_below_threshold(diff: DirectoryDiff, threshold_bytes: int, view_mode: str) -> bool:
+    if threshold_bytes <= 0:
+        return False
+    primary_delta = diff.inclusive_delta_bytes if view_mode == "tree" else diff.direct_delta_bytes
+    return primary_delta is not None and abs(primary_delta) < threshold_bytes
 
 
 def _open_path(path: Path) -> None:

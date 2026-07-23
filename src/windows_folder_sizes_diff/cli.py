@@ -185,6 +185,7 @@ def compare(
     reductions: bool = typer.Option(False),
     include_unchanged: bool = typer.Option(False),
     include_incomplete: bool = typer.Option(False),
+    tree: bool = typer.Option(False, "--tree", help="Display as hierarchical tree view"),
     limit: int = typer.Option(20, min=1),
 ) -> None:
     """Compare two scans and display direct logical-size deltas."""
@@ -198,14 +199,24 @@ def compare(
             current_scan_id=current_scan_id,
             force=force,
         )
-    _print_diff_report(
-        report,
-        threshold_bytes=threshold * 1024 * 1024,
-        reductions=reductions,
-        include_unchanged=include_unchanged,
-        include_incomplete=include_incomplete,
-        limit=limit,
-    )
+    if tree:
+        _print_tree_report(
+            report,
+            threshold_bytes=threshold * 1024 * 1024,
+            reductions=reductions,
+            include_unchanged=include_unchanged,
+            include_incomplete=include_incomplete,
+            limit=limit,
+        )
+    else:
+        _print_diff_report(
+            report,
+            threshold_bytes=threshold * 1024 * 1024,
+            reductions=reductions,
+            include_unchanged=include_unchanged,
+            include_incomplete=include_incomplete,
+            limit=limit,
+        )
 
 
 @app.command("report")
@@ -213,6 +224,8 @@ def report(
     reductions: bool = typer.Option(False),
     include_unchanged: bool = typer.Option(False),
     include_incomplete: bool = typer.Option(False),
+    tree: bool = typer.Option(False, "--tree", help="Display as hierarchical tree view"),
+    direct_only: bool = typer.Option(False, "--direct-only", help="Show only direct growth (no inclusive columns)"),
     limit: int = typer.Option(20, min=1),
     threshold_mb: int | None = typer.Option(None),
 ) -> None:
@@ -238,14 +251,25 @@ def report(
             previous_scan_id=newest.baseline_scan_id,
             current_scan_id=newest.id,
         )
-    _print_diff_report(
-        diff_report,
-        threshold_bytes=threshold * 1024 * 1024,
-        reductions=reductions,
-        include_unchanged=include_unchanged,
-        include_incomplete=include_incomplete,
-        limit=limit,
-    )
+    if tree:
+        _print_tree_report(
+            diff_report,
+            threshold_bytes=threshold * 1024 * 1024,
+            reductions=reductions,
+            include_unchanged=include_unchanged,
+            include_incomplete=include_incomplete,
+            limit=limit,
+        )
+    else:
+        _print_diff_report(
+            diff_report,
+            threshold_bytes=threshold * 1024 * 1024,
+            reductions=reductions,
+            include_unchanged=include_unchanged,
+            include_incomplete=include_incomplete,
+            limit=limit,
+            direct_only=direct_only,
+        )
 
 
 def _print_diff_report(
@@ -256,6 +280,7 @@ def _print_diff_report(
     include_unchanged: bool,
     include_incomplete: bool,
     limit: int,
+    direct_only: bool = False,
 ) -> None:
     summary = report.summary
     summary_table = Table(title="Comparison Summary")
@@ -269,41 +294,187 @@ def _print_diff_report(
     summary_table.add_row("New folders", str(summary.directories_new))
     summary_table.add_row("Removed folders", str(summary.directories_removed))
     summary_table.add_row("Incomplete", str(summary.directories_incomplete))
-    summary_table.add_row("Total positive growth", _format_bytes(summary.total_positive_growth_bytes))
-    summary_table.add_row("Total reductions", _format_bytes(summary.total_reduction_bytes))
-    summary_table.add_row("Net logical change", _format_signed_bytes(summary.net_change_bytes))
+    summary_table.add_row("Total direct growth", _format_bytes(summary.total_positive_growth_bytes))
+    summary_table.add_row("Total direct reduction", _format_bytes(summary.total_reduction_bytes))
+    summary_table.add_row("Net direct change", _format_signed_bytes(summary.net_change_bytes))
+    if summary.inclusive_comparison_available:
+        summary_table.add_row("Inclusive comparison", "Available")
+        summary_table.add_row("Partial hierarchies", str(summary.partial_hierarchy_count))
+        summary_table.add_row("Hierarchy warnings", str(summary.hierarchy_warning_count))
+        summary_table.add_row(
+            "Inclusive totals",
+            "Not summed; inclusive rows overlap across ancestors and descendants",
+        )
+    else:
+        summary_table.add_row("Inclusive comparison", "Unavailable (baseline predates hierarchy)")
     console.print(summary_table)
 
     rows = []
     for diff in report.results:
-        if diff.delta_bytes is None:
+        if diff.direct_delta_bytes is None:
             if include_incomplete:
                 rows.append(diff)
             continue
         if diff.state == "unchanged" and not include_unchanged:
             continue
         if reductions:
-            if diff.delta_bytes > -threshold_bytes:
+            if diff.direct_delta_bytes > -threshold_bytes:
                 continue
-        elif diff.delta_bytes < threshold_bytes:
+        elif diff.direct_delta_bytes < threshold_bytes:
             continue
         rows.append(diff)
         if len(rows) >= limit:
             break
 
-    table = Table(title="Directory Differences")
-    for column in ["Path", "Previous Size", "Current Size", "Net Change", "State", "Confidence"]:
-        table.add_column(column)
-    for diff in rows:
-        table.add_row(
-            str(diff.path),
-            _format_bytes(diff.previous_bytes),
-            _format_bytes(diff.current_bytes),
-            _format_signed_bytes(diff.delta_bytes),
-            diff.state,
-            diff.confidence,
-        )
+    if direct_only:
+        table = Table(title="Directory Differences (Direct Only)")
+        for column in ["Path", "Direct Δ", "Current Direct", "State", "Confidence"]:
+            table.add_column(column)
+        for diff in rows:
+            table.add_row(
+                str(diff.path),
+                _format_signed_bytes(diff.direct_delta_bytes),
+                _format_bytes(diff.current_direct_bytes),
+                diff.state,
+                diff.direct_confidence,
+            )
+    else:
+        table = Table(title="Directory Differences")
+        for column in ["Path", "Direct Δ", "Inclusive Δ", "Current Direct", "State", "Direct Conf", "Incl Conf"]:
+            table.add_column(column)
+        for diff in rows:
+            table.add_row(
+                str(diff.path),
+                _format_signed_bytes(diff.direct_delta_bytes),
+                _format_signed_bytes(diff.inclusive_delta_bytes),
+                _format_bytes(diff.current_direct_bytes),
+                diff.state,
+                diff.direct_confidence,
+                diff.inclusive_confidence,
+            )
     console.print(table)
+
+
+def _print_tree_report(
+    report: ScanDiffReport,
+    *,
+    threshold_bytes: int,
+    reductions: bool,
+    include_unchanged: bool,
+    include_incomplete: bool,
+    limit: int,
+) -> None:
+    """Print a hierarchical tree view of the comparison."""
+    summary = report.summary
+    console.print(f"[bold]Tree View: Scan {summary.previous_scan_id} → {summary.current_scan_id}[/bold]")
+    console.print(f"Direct growth: {_format_bytes(summary.total_positive_growth_bytes)}")
+    console.print(f"Net direct change: {_format_signed_bytes(summary.net_change_bytes)}")
+    if summary.inclusive_comparison_available:
+        console.print("[dim]Inclusive values overlap — they are not summed.[/dim]")
+    else:
+        console.print("[dim]Inclusive comparison unavailable.[/dim]")
+    console.print("─" * 60)
+
+    # Build a tree from diffs
+    diffs_by_parent: dict[int | None, list] = {}
+    for diff in report.results:
+        parent = diff.parent_directory_id
+        if parent not in diffs_by_parent:
+            diffs_by_parent[parent] = []
+        diffs_by_parent[parent].append(diff)
+
+    shown = 0
+
+    def _print_node(diff, indent: int = 0):
+        nonlocal shown
+        if shown >= limit:
+            return
+        prefix = "  " * indent + ("├─ " if indent > 0 else "")
+        direct = _format_signed_bytes(diff.direct_delta_bytes)
+        inclusive = _format_signed_bytes(diff.inclusive_delta_bytes) if diff.inclusive_delta_bytes is not None else "N/A"
+        console.print(
+            f"{prefix}{diff.path}  "
+            f"[bold]direct Δ: {direct}[/bold]  "
+            f"inclusive Δ: {inclusive}  "
+            f"[dim]{diff.state} [{diff.direct_confidence}][/dim]"
+        )
+        shown += 1
+        children = diffs_by_parent.get(diff.directory_id, [])
+        children.sort(key=lambda d: abs(d.direct_delta_bytes or 0), reverse=True)
+        for child in children:
+            if shown >= limit:
+                return
+            _print_node(child, indent + 1)
+
+    # Print root-level nodes (parent_directory_id is None)
+    roots = diffs_by_parent.get(None, [])
+    roots.sort(key=lambda d: abs(d.direct_delta_bytes or 0), reverse=True)
+    for root_diff in roots:
+        if shown >= limit:
+            break
+        _print_node(root_diff, 0)
+
+    console.print("─" * 60)
+    console.print("[dim]Inclusive values overlap across parent and child folders and are not summed.[/dim]")
+
+
+@app.command("folder-show")
+def folder_show(
+    path: str = typer.Argument(..., help="Folder path to show detail for"),
+    scan_id: int | None = typer.Option(None, help="Current scan ID (default: latest completed comparison)"),
+) -> None:
+    """Display direct and inclusive history for a folder in the current comparison."""
+    _, session_factory = _session_factory()
+    from windows_folder_sizes_diff.db.pathing import normalize_windows_path
+
+    with session_factory() as session:
+        if scan_id is None:
+            newest = session.scalar(
+                select(Scan)
+                .where(
+                    Scan.comparison_status.in_(["completed", "completed_with_warnings"]),
+                    Scan.baseline_scan_id.is_not(None),
+                )
+                .order_by(Scan.completed_at.desc())
+                .limit(1)
+            )
+            if newest is None or newest.baseline_scan_id is None:
+                console.print("No completed comparison is available.")
+                return
+            scan_id = newest.id
+            baseline_id = newest.baseline_scan_id
+        else:
+            scan = session.get(Scan, scan_id)
+            if scan is None or scan.baseline_scan_id is None:
+                console.print("Scan not found or has no baseline.")
+                return
+            baseline_id = scan.baseline_scan_id
+
+        report = ScanDiffer().compare(session, previous_scan_id=baseline_id, current_scan_id=scan_id)
+
+    normalized = normalize_windows_path(path)
+    for diff in report.results:
+        if normalize_windows_path(str(diff.path)) == normalized:
+            table = Table(title=f"Folder Detail: {diff.path}")
+            table.add_column("Field")
+            table.add_column("Value")
+            table.add_row("Path", str(diff.path))
+            table.add_row("Depth", str(diff.depth))
+            table.add_row("State", diff.state)
+            table.add_row("Previous direct size", _format_bytes(diff.previous_direct_bytes))
+            table.add_row("Current direct size", _format_bytes(diff.current_direct_bytes))
+            table.add_row("Direct delta", _format_signed_bytes(diff.direct_delta_bytes))
+            table.add_row("Direct confidence", diff.direct_confidence)
+            table.add_row("Previous inclusive size", _format_bytes(diff.previous_inclusive_bytes))
+            table.add_row("Current inclusive size", _format_bytes(diff.current_inclusive_bytes))
+            table.add_row("Inclusive delta", _format_signed_bytes(diff.inclusive_delta_bytes))
+            table.add_row("Inclusive confidence", diff.inclusive_confidence)
+            table.add_row("Hierarchy status", diff.hierarchy_status or "unknown")
+            table.add_row("Warnings", str(diff.warning_count))
+            console.print(table)
+            return
+
+    console.print(f"Folder not found in comparison: {path}")
 
 
 def _format_bytes(value: int | None) -> str:

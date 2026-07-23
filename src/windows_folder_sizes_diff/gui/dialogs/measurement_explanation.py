@@ -9,11 +9,16 @@ The first compatible scan creates a baseline.
 A later compatible scan is required to calculate changes.
 
 Direct logical size
-Phase 2 measures the logical size of files directly contained in each folder.
-It does not yet include descendant folders in parent totals.
+Direct size is the logical size of files directly contained in each folder.
+It does not include descendant folders.
+
+Inclusive logical size
+Inclusive size is the direct size of a folder plus all descendant folder sizes.
+Inclusive values overlap across parents and children, so they are shown for navigation and must not be summed.
 
 True differences
-Growth is calculated by subtracting the previous direct logical size from the current direct logical size.
+Direct growth is calculated by subtracting the previous direct logical size from the current direct logical size.
+Inclusive growth is calculated separately when both scans have hierarchy measurements.
 
 Same-size rewrites
 Rewriting a file without changing its size produces a zero-byte size difference.
@@ -25,10 +30,10 @@ Removed folders are reported as negative changes.
 Incomplete comparisons
 Folders that could not be measured reliably are shown as incomplete.
 The application does not treat inaccessible folders as empty folders.
+Inaccessible descendants make ancestor inclusive measurements partial.
 
 Current limitations
-Phase 2 does not yet provide:
-- inclusive parent-folder totals;
+Phase 3 does not yet provide:
 - reparse-point deduplication;
 - physical allocated size;
 - whole-volume reconciliation;

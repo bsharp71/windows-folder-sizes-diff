@@ -50,6 +50,8 @@ class ApplicationMenuBar:
 
         filter_state = "normal" if has_result_view else "disabled"
         for label in (
+            "Direct Growth View",
+            "Folder Tree View",
             "Show Growth",
             "Show Reductions",
             "Show New and Removed Folders",
@@ -59,6 +61,7 @@ class ApplicationMenuBar:
         view_menu.entryconfigure("Refresh", state="normal")
 
     def sync_filter_variables(self) -> None:
+        self.view_mode_var.set(self._view_state.view_mode)
         self.show_growth_var.set(self._view_state.show_growth)
         self.show_reductions_var.set(self._view_state.show_reductions)
         self.show_new_removed_var.set(self._view_state.show_new_removed)
@@ -94,6 +97,7 @@ class ApplicationMenuBar:
         self.menus["History"] = menu
 
     def _build_view_menu(self) -> None:
+        self.view_mode_var = tk.StringVar(master=self._root, value=self._view_state.view_mode)
         self.show_growth_var = tk.BooleanVar(master=self._root, value=self._view_state.show_growth)
         self.show_reductions_var = tk.BooleanVar(
             master=self._root, value=self._view_state.show_reductions
@@ -106,6 +110,19 @@ class ApplicationMenuBar:
         )
 
         menu = tk.Menu(self.menu_bar, tearoff=False)
+        menu.add_radiobutton(
+            label="Direct Growth View",
+            variable=self.view_mode_var,
+            value="direct",
+            command=self._on_view_filters_changed,
+        )
+        menu.add_radiobutton(
+            label="Folder Tree View",
+            variable=self.view_mode_var,
+            value="tree",
+            command=self._on_view_filters_changed,
+        )
+        menu.add_separator()
         menu.add_checkbutton(
             label="Show Growth",
             variable=self.show_growth_var,
@@ -153,6 +170,7 @@ class ApplicationMenuBar:
                 show_reductions=bool(self.show_reductions_var.get()),
                 show_new_removed=bool(self.show_new_removed_var.get()),
                 show_incomplete=bool(self.show_incomplete_var.get()),
+                view_mode=str(self.view_mode_var.get()),
             )
         )
 

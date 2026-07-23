@@ -1,8 +1,8 @@
 # Folder Size Difference Scanner
 
-A Windows desktop app that scans a directory tree and reports direct logical folder-size changes between comparable completed scans.
+A Windows desktop app that scans a directory tree and reports direct and inclusive logical folder-size changes between comparable completed scans.
 
-Useful for tracking down where logical file sizes changed between scans. Phase 2 compares persisted directory observations; it does not yet measure recursive inclusive size or physical allocated disk usage.
+Useful for tracking down where logical file sizes changed between scans. The primary report ranks non-overlapping direct folder growth so parent and child folders are not double counted. Inclusive subtree values are available for hierarchy navigation, not grand totals.
 
 ## Requirements
 
@@ -32,7 +32,7 @@ uv run python src/main.py
 
 ## Usage
 
-Fill in the three settings at the top of the window and click **Start**:
+Fill in the three settings at the top of the window and click **Run Scan**:
 
 | Setting | Default | Description |
 |---|---|---|
@@ -42,7 +42,7 @@ Fill in the three settings at the top of the window and click **Start**:
 
 Use the **Browse** button to navigate the filesystem and pick a folder.
 
-Click **Stop** at any time to cancel a running scan.
+Click **Cancel Scan** at any time to request cooperative cancellation of a running scan.
 
 ## Output
 
@@ -66,28 +66,42 @@ A status bar at the bottom shows live progress and scan/comparison status.
 
 ## Measurement Semantics
 
-Phase 2 measures direct logical folder size:
+The scanner stores two logical measurements:
 
 ```
 direct_logical_size(folder) = sum(st_size of direct child files)
+inclusive_logical_size(folder) = direct_logical_size(folder) + all descendant direct sizes
 ```
 
-Files in child folders are measured on the child folder, not rolled into the parent. Recursive inclusive sizing is deferred to Phase 3.
+Direct size is the size of files immediately inside a folder. Inclusive size is the size of the folder's whole subtree.
+
+The default report is ranked by direct growth because direct values do not overlap. Inclusive values overlap across ancestors and descendants, so they are shown for navigation and must not be summed into a total.
 
 Example:
 
 ```
-Scan 1:
-C:\Data = 1.0 GB
+A 500 MB file added to a nested folder produces:
 
-Scan 2:
-C:\Data = 1.4 GB
-
-Reported direct logical change:
-+0.4 GB
+Nested folder direct growth: 500 MB
+Each ancestor direct growth: 0 MB
+Each ancestor inclusive growth: 500 MB
+Total disk growth reported: 500 MB
 ```
 
-Changing a file without changing its size produces zero folder growth.
+Hierarchy status meanings:
+
+```
+complete       Inclusive totals were calculated successfully.
+partial        One or more descendants were incomplete or inaccessible.
+orphaned       A parent relationship could not be resolved.
+invalid_parent Stored hierarchy metadata is inconsistent.
+cycle_detected Corrupt hierarchy metadata created a cycle.
+unavailable   The scan predates Phase 3 hierarchy aggregation.
+```
+
+If a descendant is inaccessible, direct measurements for accessible folders remain reportable, but ancestor inclusive status becomes partial. Upgraded Phase 2 scans remain readable; their inclusive comparison is unavailable until two Phase 3 hierarchy-compatible scans exist.
+
+Changing a file without changing its size produces zero direct growth.
 
 These values are logical file-size differences between snapshots. They are not physical allocated disk-space differences; sparse files, compression, hard links, inaccessible paths, system metadata, and files changing during a scan can all make disk usage differ from the report.
 
@@ -131,8 +145,12 @@ uv run folder-diff-cli scans
 uv run folder-diff-cli scan-show <scan-id>
 uv run folder-diff-cli warnings --scan-id <scan-id>
 uv run folder-diff-cli report
+uv run folder-diff-cli report --tree
+uv run folder-diff-cli report --direct-only
 uv run folder-diff-cli report --reductions
 uv run folder-diff-cli compare <current-scan-id> <previous-scan-id>
+uv run folder-diff-cli compare <current-scan-id> <previous-scan-id> --tree
+uv run folder-diff-cli folder-show "C:\Users\brad\AppData\Roaming\Notion"
 ```
 
 ## Log Files
@@ -143,7 +161,7 @@ Each run writes a timestamped report to the `logs/` directory:
 logs/scan_2025-07-23_14-30-00.log
 ```
 
-The **Show Log** button becomes active at the end of a run when a log file was written, and opens it in Notepad.
+Use **File → Open Logs Folder** to open the report directory, or **Help → Open Application Log** to open the active application log.
 
 ## Settings Persistence
 

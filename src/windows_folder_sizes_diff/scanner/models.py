@@ -27,10 +27,13 @@ class FolderObservation(BaseModel):
     """Structured per-folder measurement for Phase 1 persistence."""
 
     path: Path
+    parent_path: Path | None = None
+    depth: int = 0
     matching_bytes: int = Field(ge=0)
     direct_file_count: int = Field(ge=0)
     matched_file_count: int = Field(ge=0)
     direct_logical_bytes: int | None = Field(default=None, ge=0)
+    direct_child_count: int = Field(default=0, ge=0)
     files_examined: int = Field(default=0, ge=0)
     measurement_status: str = "complete"
     measurement_started_at: datetime | None = None

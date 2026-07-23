@@ -103,28 +103,48 @@ def _diff_report_lines(
         f"Removed folders: {summary.directories_removed}",
         f"Incomplete comparisons: {summary.directories_incomplete}",
         "",
-        f"Total positive growth: {_format_signed_bytes(summary.total_positive_growth_bytes)}",
-        f"Total reductions: {_format_bytes(summary.total_reduction_bytes)}",
-        f"Net logical change: {_format_signed_bytes(summary.net_change_bytes)}",
+        "DIRECT TOTALS (non-overlapping — may be summed)",
+        f"Total positive direct growth: {_format_signed_bytes(summary.total_positive_growth_bytes)}",
+        f"Total direct reduction: {_format_bytes(summary.total_reduction_bytes)}",
+        f"Net direct change: {_format_signed_bytes(summary.net_change_bytes)}",
         "",
+    ]
+    if summary.inclusive_comparison_available:
+        lines.extend([
+            "HIERARCHY SUMMARY",
+            "Inclusive values overlap across parent and child folders.",
+            "They are shown for navigation and must not be summed.",
+            f"Partial hierarchies: {summary.partial_hierarchy_count}",
+            f"Hierarchy warnings: {summary.hierarchy_warning_count}",
+            "",
+        ])
+    else:
+        lines.extend([
+            "Inclusive comparison unavailable — baseline predates hierarchical measurements.",
+            "Run two Phase 3 scans for inclusive (subtree) comparisons.",
+            "",
+        ])
+    lines.extend([
         "These values represent logical file-size differences between snapshots.",
         "They do not yet represent physical allocated disk-space differences.",
         "",
-        "RESULTS",
+        "DIRECT FOLDER GROWTH",
         "─" * 60,
-    ]
+    ])
     threshold = request.growth_threshold_bytes
     for diff in diff_report.results:
-        if diff.delta_bytes is None or abs(diff.delta_bytes) < threshold or diff.state == "unchanged":
+        if diff.direct_delta_bytes is None or abs(diff.direct_delta_bytes) < threshold or diff.state == "unchanged":
             continue
         lines.extend(
             [
                 str(diff.path),
-                f"    Previous direct size: {_format_bytes(diff.previous_bytes)}",
-                f"    Current direct size: {_format_bytes(diff.current_bytes)}",
-                f"    Net change: {_format_signed_bytes(diff.delta_bytes)}",
+                f"    Direct growth: {_format_signed_bytes(diff.direct_delta_bytes)}",
+                f"    Inclusive growth: {_format_signed_bytes(diff.inclusive_delta_bytes)}",
+                f"    Previous direct size: {_format_bytes(diff.previous_direct_bytes)}",
+                f"    Current direct size: {_format_bytes(diff.current_direct_bytes)}",
                 f"    State: {diff.state}",
-                f"    Confidence: {diff.confidence}",
+                f"    Direct confidence: {diff.direct_confidence}",
+                f"    Inclusive confidence: {diff.inclusive_confidence}",
                 "",
             ]
         )

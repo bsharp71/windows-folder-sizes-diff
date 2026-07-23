@@ -100,6 +100,8 @@ class DirectoryRepository:
         paths: Iterable[Path],
         *,
         scan_id: int,
+        parent_map: dict[str, str | None] | None = None,
+        depth_map: dict[str, int] | None = None,
     ) -> dict[str, int]:
         unique: dict[str, Path] = {
             normalize_windows_path(path): path for path in paths
@@ -115,19 +117,25 @@ class DirectoryRepository:
         existing = {row.normalized_path: row.id for row in existing_rows}
 
         now = utc_now()
-        missing_rows = [
-            {
-                "normalized_path": normalized,
-                "display_path": str(path),
-                "parent_normalized_path": parent_normalized_path(path),
-                "first_seen_scan_id": scan_id,
-                "last_seen_scan_id": scan_id,
-                "created_at": now,
-                "updated_at": now,
-            }
-            for normalized, path in unique.items()
-            if normalized not in existing
-        ]
+        missing_rows = []
+        for normalized, path in unique.items():
+            if normalized in existing:
+                continue
+            parent_norm = parent_map.get(normalized) if parent_map else parent_normalized_path(path)
+            depth = depth_map.get(normalized, 0) if depth_map else 0
+            missing_rows.append(
+                {
+                    "normalized_path": normalized,
+                    "display_path": str(path),
+                    "parent_normalized_path": parent_norm,
+                    "parent_directory_id": None,  # resolved after insert
+                    "depth": depth,
+                    "first_seen_scan_id": scan_id,
+                    "last_seen_scan_id": scan_id,
+                    "created_at": now,
+                    "updated_at": now,
+                }
+            )
         if missing_rows:
             session.execute(insert(Directory), missing_rows)
             inserted_rows = session.execute(
@@ -137,6 +145,13 @@ class DirectoryRepository:
             ).all()
             existing.update({row.normalized_path: row.id for row in inserted_rows})
 
+        # Resolve parent_directory_id for all directories, including parents inserted
+        # in earlier batches.
+        if parent_map:
+            self._resolve_parent_ids(session, existing, parent_map)
+        if depth_map or parent_map:
+            self._update_hierarchy_metadata(session, existing, parent_map or {}, depth_map or {})
+
         if existing:
             session.execute(
                 update(Directory)
@@ -145,6 +160,69 @@ class DirectoryRepository:
             )
 
         return existing
+
+    def _update_hierarchy_metadata(
+        self,
+        session: Session,
+        directory_ids: dict[str, int],
+        parent_map: dict[str, str | None],
+        depth_map: dict[str, int],
+    ) -> None:
+        """Refresh path-derived hierarchy metadata for observed directories."""
+        if not directory_ids:
+            return
+        now = utc_now()
+        for normalized, directory_id in directory_ids.items():
+            values: dict = {"updated_at": now}
+            if normalized in parent_map:
+                values["parent_normalized_path"] = parent_map[normalized]
+            if normalized in depth_map:
+                values["depth"] = depth_map[normalized]
+            if len(values) == 1:
+                continue
+            session.execute(
+                update(Directory)
+                .where(Directory.id == directory_id)
+                .values(**values)
+            )
+
+    def _resolve_parent_ids(
+        self,
+        session: Session,
+        directory_ids: dict[str, int],
+        parent_map: dict[str, str | None],
+    ) -> None:
+        """Set parent_directory_id after all directories are inserted."""
+        parent_norms = {parent for parent in parent_map.values() if parent is not None}
+        missing_parent_norms = parent_norms - set(directory_ids)
+        if missing_parent_norms:
+            parent_rows = session.execute(
+                select(Directory.id, Directory.normalized_path).where(
+                    Directory.normalized_path.in_(missing_parent_norms)
+                )
+            ).all()
+            directory_ids = {
+                **directory_ids,
+                **{row.normalized_path: row.id for row in parent_rows},
+            }
+
+        updates = []
+        for normalized, dir_id in directory_ids.items():
+            if normalized not in parent_map:
+                continue
+            parent_norm = parent_map.get(normalized)
+            parent_id = directory_ids.get(parent_norm) if parent_norm is not None else None
+            updates.append({"id": dir_id, "parent_directory_id": parent_id})
+        if updates:
+            now = utc_now()
+            for batch_start in range(0, len(updates), 500):
+                batch = updates[batch_start:batch_start + 500]
+                for item in batch:
+                    session.execute(
+                        update(Directory)
+                        .where(Directory.id == item["id"])
+                        .values(parent_directory_id=item["parent_directory_id"], updated_at=now)
+                    )
 
     def count(self, session: Session) -> int:
         return int(session.scalar(select(func.count()).select_from(Directory)) or 0)
@@ -174,7 +252,12 @@ class ObservationRepository:
                     "direct_file_count": observation.direct_file_count,
                     "matched_file_count": observation.matched_file_count,
                     "direct_logical_bytes": observation.direct_logical_bytes,
+                    "inclusive_logical_bytes": None,
+                    "inclusive_file_count": None,
+                    "direct_child_count": observation.direct_child_count,
+                    "descendant_directory_count": None,
                     "measurement_status": observation.measurement_status,
+                    "hierarchy_status": "pending",
                     "files_examined": observation.files_examined or observation.direct_file_count,
                     "measurement_started_at": observation.measurement_started_at,
                     "measurement_completed_at": observation.measurement_completed_at,

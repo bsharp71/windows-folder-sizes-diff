@@ -7,6 +7,7 @@ from sqlalchemy.exc import IntegrityError
 from windows_folder_sizes_diff.db.models import Directory, DirectoryObservation, Scan
 from windows_folder_sizes_diff.db.repositories import DirectoryRepository, ObservationRepository
 from windows_folder_sizes_diff.db.lifecycle import ScanLifecycleService
+from windows_folder_sizes_diff.db.pathing import normalize_windows_path
 from windows_folder_sizes_diff.db.time import utc_now
 from windows_folder_sizes_diff.scanner.models import FolderObservation, ScanRequest
 
@@ -34,6 +35,67 @@ def test_directory_identity_reuses_normalized_paths(migrated_session_factory, tm
     assert len(directories) == 1
     assert set(first.values()) == set(second.values())
     assert directories[0].display_path == str(tmp_path)
+
+
+def test_directory_parent_resolution_uses_parents_from_previous_batches(
+    migrated_session_factory, tmp_path: Path
+) -> None:
+    scan_id = create_running_scan(migrated_session_factory, tmp_path)
+    repo = DirectoryRepository()
+    child = tmp_path / "child"
+    root_norm = normalize_windows_path(tmp_path)
+    child_norm = normalize_windows_path(child)
+
+    with migrated_session_factory() as session:
+        root_ids = repo.ensure_many(
+            session,
+            [tmp_path],
+            scan_id=scan_id,
+            parent_map={root_norm: None},
+            depth_map={root_norm: 0},
+        )
+        session.commit()
+
+    with migrated_session_factory() as session:
+        child_ids = repo.ensure_many(
+            session,
+            [child],
+            scan_id=scan_id,
+            parent_map={child_norm: root_norm},
+            depth_map={child_norm: 1},
+        )
+        session.commit()
+        child_row = session.get(Directory, child_ids[child_norm])
+
+    assert child_row.parent_directory_id == root_ids[root_norm]
+
+
+def test_existing_directory_rows_receive_phase3_depth_metadata(
+    migrated_session_factory, tmp_path: Path
+) -> None:
+    scan_id = create_running_scan(migrated_session_factory, tmp_path)
+    repo = DirectoryRepository()
+    child = tmp_path / "child"
+    child_norm = normalize_windows_path(child)
+
+    with migrated_session_factory() as session:
+        ids = repo.ensure_many(session, [child], scan_id=scan_id)
+        session.commit()
+
+    with migrated_session_factory() as session:
+        updated = repo.ensure_many(
+            session,
+            [child],
+            scan_id=scan_id,
+            parent_map={child_norm: normalize_windows_path(tmp_path)},
+            depth_map={child_norm: 1},
+        )
+        session.commit()
+        row = session.get(Directory, updated[child_norm])
+
+    assert row.id == ids[child_norm]
+    assert row.depth == 1
+    assert row.parent_normalized_path == normalize_windows_path(tmp_path)
 
 
 def test_observations_store_below_and_above_threshold_rows(

@@ -3,6 +3,8 @@ from pathlib import Path
 import pytest
 
 from windows_folder_sizes_diff.config import AppSettings, load_settings, save_settings
+from windows_folder_sizes_diff.db.configuration import scan_configuration_hash
+from windows_folder_sizes_diff.scanner.models import ScanRequest
 
 
 def test_defaults_load_when_config_missing(tmp_path: Path) -> None:
@@ -79,3 +81,13 @@ def test_paths_containing_spaces_are_preserved(tmp_path: Path) -> None:
     )
 
     assert load_settings(config_path).target_directory == path_with_spaces
+
+
+def test_scan_configuration_hash_preserves_direct_measurement_compatibility(
+    tmp_path: Path, monkeypatch
+) -> None:
+    request = ScanRequest(target_directory=tmp_path, growth_threshold_mb=1, history_days=1)
+    first = scan_configuration_hash(request)
+    monkeypatch.setattr("windows_folder_sizes_diff.db.configuration.HIERARCHY_ALGORITHM_VERSION", 99)
+
+    assert scan_configuration_hash(request) == first

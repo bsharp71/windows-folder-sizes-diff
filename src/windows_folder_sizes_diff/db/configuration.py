@@ -10,6 +10,7 @@ from windows_folder_sizes_diff.scanner.models import ScanRequest
 
 SCAN_ALGORITHM_VERSION = 1
 MEASUREMENT_ALGORITHM_VERSION = 2
+HIERARCHY_ALGORITHM_VERSION = 1
 PATH_NORMALIZATION_VERSION = 1
 
 

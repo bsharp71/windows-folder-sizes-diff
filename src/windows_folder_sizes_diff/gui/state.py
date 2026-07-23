@@ -13,6 +13,7 @@ class ComparisonViewFilters:
     show_reductions: bool = False
     show_new_removed: bool = True
     show_incomplete: bool = True
+    view_mode: str = "direct"  # "direct" or "tree"
 
 
 @dataclass

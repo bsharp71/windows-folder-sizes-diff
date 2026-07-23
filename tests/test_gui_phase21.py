@@ -1,6 +1,11 @@
+from datetime import datetime
 from pathlib import Path
 
-from windows_folder_sizes_diff.analysis.models import DirectoryDiff
+from windows_folder_sizes_diff.analysis.models import (
+    DirectoryDiff,
+    ScanDiffReport,
+    ScanDiffSummary,
+)
 from windows_folder_sizes_diff.db.lifecycle import ScanLifecycleService
 from windows_folder_sizes_diff.db.models import Scan, ScanWarningRecord
 from windows_folder_sizes_diff.db.persistence import ScanPersistenceCoordinator
@@ -83,6 +88,9 @@ class FakeActionView:
     def append_diff_result(self, diff: DirectoryDiff) -> None:
         self.results.append(diff)
 
+    def set_result_view_mode(self, mode: str) -> None:
+        self.view_mode = mode
+
     def set_status(self, message: str) -> None:
         self.statuses.append(message)
 
@@ -110,6 +118,17 @@ class FakeBooleanVar:
         self.value = value
 
 
+class FakeStringVar:
+    def __init__(self, master=None, value="") -> None:
+        self.value = value
+
+    def get(self) -> str:
+        return self.value
+
+    def set(self, value: str) -> None:
+        self.value = value
+
+
 class FakeMenu:
     def __init__(self, master=None, tearoff=False) -> None:
         self.master = master
@@ -121,6 +140,9 @@ class FakeMenu:
 
     def add_checkbutton(self, **kwargs) -> None:
         self.entries.append({"type": "checkbutton", "state": "normal", **kwargs})
+
+    def add_radiobutton(self, **kwargs) -> None:
+        self.entries.append({"type": "radiobutton", "state": "normal", **kwargs})
 
     def add_separator(self) -> None:
         self.entries.append({"type": "separator"})
@@ -168,6 +190,7 @@ def install_fake_tk(monkeypatch) -> None:
 
     monkeypatch.setattr(menu_bar_module.tk, "Menu", FakeMenu)
     monkeypatch.setattr(menu_bar_module.tk, "BooleanVar", FakeBooleanVar)
+    monkeypatch.setattr(menu_bar_module.tk, "StringVar", FakeStringVar)
 
 
 def menu_labels(menu: FakeMenu) -> list[str]:
@@ -186,11 +209,11 @@ def make_diff(state: str, delta: int | None) -> DirectoryDiff:
     return DirectoryDiff(
         directory_id=len(state),
         path=Path(f"C:/{state}"),
-        previous_bytes=0 if delta is not None else None,
-        current_bytes=delta if delta is not None else None,
-        delta_bytes=delta,
+        previous_direct_bytes=0 if delta is not None else None,
+        current_direct_bytes=delta if delta is not None else None,
+        direct_delta_bytes=delta,
         state=state,
-        confidence="high",
+        direct_confidence="high",
     )
 
 
@@ -247,6 +270,8 @@ def test_menu_structure_and_states(monkeypatch) -> None:
         "Scan Warnings…",
     ]
     assert menu_labels(menu_bar.menus["View"]) == [
+        "Direct Growth View",
+        "Folder Tree View",
         "Show Growth",
         "Show Reductions",
         "Show New and Removed Folders",
@@ -264,6 +289,7 @@ def test_menu_structure_and_states(monkeypatch) -> None:
 
     assert menu_bar.menus["File"].entrycget("Run Scan", "state") == "disabled"
     assert menu_bar.menus["History"].entrycget("Recent Scans…", "state") == "disabled"
+    assert menu_bar.menus["View"].entrycget("Direct Growth View", "state") == "disabled"
     assert menu_bar.menus["View"].entrycget("Show Growth", "state") == "disabled"
 
     state.scan_active = False
@@ -275,6 +301,7 @@ def test_menu_structure_and_states(monkeypatch) -> None:
     assert menu_bar.menus["File"].entrycget("Run Scan", "state") == "normal"
     assert menu_bar.menus["History"].entrycget("Latest Comparison", "state") == "normal"
     assert menu_bar.menus["History"].entrycget("Scan Warnings…", "state") == "normal"
+    assert menu_bar.menus["View"].entrycget("Folder Tree View", "state") == "normal"
     assert menu_bar.menus["View"].entrycget("Show Growth", "state") == "normal"
 
 
@@ -312,6 +339,74 @@ def test_filter_defaults_hide_reductions_and_keep_incomplete() -> None:
         show_incomplete=False,
     )
     assert [diff.state for diff in filter_diffs(diffs, filters)] == ["reduced"]
+
+
+def test_tree_view_includes_ancestors_with_inclusive_growth(tmp_path) -> None:
+    view = FakeActionView()
+    actions = ApplicationActions(
+        view,
+        filters=ComparisonViewFilters(),
+        state=ApplicationState(),
+        session_factory=None,
+        database_path=tmp_path / "folder_sizes.db",
+    )
+    root = DirectoryDiff(
+        directory_id=1,
+        path=Path("C:/data"),
+        previous_direct_bytes=0,
+        current_direct_bytes=0,
+        direct_delta_bytes=0,
+        previous_inclusive_bytes=100,
+        current_inclusive_bytes=150,
+        inclusive_delta_bytes=50,
+        state="unchanged",
+        direct_confidence="high",
+        inclusive_confidence="high",
+    )
+    child = DirectoryDiff(
+        directory_id=2,
+        path=Path("C:/data/cache"),
+        parent_directory_id=1,
+        depth=1,
+        previous_direct_bytes=100,
+        current_direct_bytes=150,
+        direct_delta_bytes=50,
+        previous_inclusive_bytes=100,
+        current_inclusive_bytes=150,
+        inclusive_delta_bytes=50,
+        state="grown",
+        direct_confidence="high",
+        inclusive_confidence="high",
+    )
+    report = ScanDiffReport(
+        summary=ScanDiffSummary(
+            previous_scan_id=10,
+            current_scan_id=11,
+            directories_compared=2,
+            directories_grown=1,
+            directories_reduced=0,
+            directories_unchanged=1,
+            directories_new=0,
+            directories_removed=0,
+            directories_incomplete=0,
+            total_positive_growth_bytes=50,
+            total_reduction_bytes=0,
+            net_change_bytes=50,
+            inclusive_comparison_available=True,
+        ),
+        results=[child, root],
+        generated_at=datetime(2026, 7, 23, 12, 0, 0),
+    )
+
+    actions.display_comparison_report(report)
+    assert [diff.directory_id for diff in view.results] == [2]
+    assert view.view_mode == "direct"
+
+    actions.update_filters(ComparisonViewFilters(view_mode="tree"))
+
+    assert [diff.directory_id for diff in view.results] == [1, 2]
+    assert view.view_mode == "tree"
+    assert view.statuses[-1] == "Comparison 10 -> 11: 2 row(s) shown in folder tree view."
 
 
 def test_actions_reuse_scan_and_cancel_controller_paths(migrated_session_factory, tmp_path) -> None:
@@ -438,5 +533,8 @@ def test_latest_comparison_loads_persisted_results(migrated_session_factory, tmp
 
     actions.show_latest_comparison()
 
-    assert [diff.delta_bytes for diff in view.results] == [50]
-    assert view.statuses[-1] == f"Comparison {first.id} -> {second.id}: 1 row(s) shown."
+    assert [diff.direct_delta_bytes for diff in view.results] == [50]
+    assert (
+        view.statuses[-1]
+        == f"Comparison {first.id} -> {second.id}: 1 row(s) shown in direct growth view."
+    )

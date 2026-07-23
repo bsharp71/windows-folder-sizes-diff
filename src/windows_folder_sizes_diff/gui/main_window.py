@@ -35,6 +35,7 @@ class MainWindow(ctk.CTk):
         self.minsize(640, 480)
         self._settings = settings
         self._last_log_path: Path | None = None
+        self._result_view_mode = "direct"
         self._application_state = ApplicationState()
         self._view_filters = ComparisonViewFilters()
         self._controller = ScanController(
@@ -154,20 +155,30 @@ class MainWindow(ctk.CTk):
         self._results.configure(state="disabled")
 
     def append_diff_result(self, diff: DirectoryDiff) -> None:
-        previous = _format_mb(diff.previous_bytes)
-        current = _format_mb(diff.current_bytes)
-        change = _format_signed_mb(diff.delta_bytes)
+        previous_direct = _format_mb(diff.previous_direct_bytes)
+        current_direct = _format_mb(diff.current_direct_bytes)
+        direct_change = _format_signed_mb(diff.direct_delta_bytes)
+        inclusive_change = (
+            _format_signed_mb(diff.inclusive_delta_bytes)
+            if diff.inclusive_delta_bytes is not None
+            else "N/A"
+        )
         state = _format_state(diff.state)
+        indent = "  " * diff.depth if self._result_view_mode == "tree" and diff.depth > 0 else ""
         self._results.configure(state="normal")
         self._results.insert(
             "end",
-            f"{diff.path}\n"
-            f"    Net logical change: {change}\n"
-            f"    Previous direct size: {previous} | Current direct size: {current}\n"
-            f"    State: {state} | Confidence: {diff.confidence}\n\n",
+            f"{indent}{diff.path}\n"
+            f"{indent}    Direct Δ: {direct_change} | "
+            f"Previous: {previous_direct} | Current: {current_direct}\n"
+            f"{indent}    Inclusive Δ: {inclusive_change} | "
+            f"State: {state} | Direct conf: {diff.direct_confidence}\n\n",
         )
         self._results.see("end")
         self._results.configure(state="disabled")
+
+    def set_result_view_mode(self, mode: str) -> None:
+        self._result_view_mode = "tree" if mode == "tree" else "direct"
 
     def display_diff_report(self, diff_report) -> None:
         self._actions.display_comparison_report(diff_report)

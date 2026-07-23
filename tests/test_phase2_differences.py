@@ -92,7 +92,7 @@ def test_same_size_rewrite_produces_zero_delta(migrated_session_factory, tmp_pat
 
     diffs, report = diff_by_path(migrated_session_factory, baseline_id, current_id)
 
-    assert diffs[str(target)].delta_bytes == 0
+    assert diffs[str(target)].direct_delta_bytes == 0
     assert diffs[str(target)].state == "unchanged"
     assert report.summary.net_change_bytes == 0
 
@@ -113,11 +113,11 @@ def test_file_growth_shrink_and_delete_deltas(migrated_session_factory, tmp_path
     third_diffs, _ = diff_by_path(migrated_session_factory, second, third)
     fourth_diffs, _ = diff_by_path(migrated_session_factory, third, fourth)
 
-    assert second_diffs[str(target)].delta_bytes == 50
+    assert second_diffs[str(target)].direct_delta_bytes == 50
     assert second_diffs[str(target)].state == "grown"
-    assert third_diffs[str(target)].delta_bytes == -75
+    assert third_diffs[str(target)].direct_delta_bytes == -75
     assert third_diffs[str(target)].state == "reduced"
-    assert fourth_diffs[str(target)].delta_bytes == -75
+    assert fourth_diffs[str(target)].direct_delta_bytes == -75
 
 
 def test_file_move_offsets_net_change(migrated_session_factory, tmp_path: Path) -> None:
@@ -132,8 +132,8 @@ def test_file_move_offsets_net_change(migrated_session_factory, tmp_path: Path) 
 
     diffs, report = diff_by_path(migrated_session_factory, baseline_id, current_id)
 
-    assert diffs[str(folder_a)].delta_bytes == -100
-    assert diffs[str(folder_b)].delta_bytes == 100
+    assert diffs[str(folder_a)].direct_delta_bytes == -100
+    assert diffs[str(folder_b)].direct_delta_bytes == 100
     assert report.summary.net_change_bytes == 0
 
 
@@ -153,13 +153,13 @@ def test_new_and_removed_folders(migrated_session_factory, tmp_path: Path) -> No
     diffs, _ = diff_by_path(migrated_session_factory, baseline_id, current_id)
 
     assert diffs[str(target / "new")].state == "new"
-    assert diffs[str(target / "new")].delta_bytes == 100
+    assert diffs[str(target / "new")].direct_delta_bytes == 100
     assert diffs[str(target / "empty-new")].state == "new"
-    assert diffs[str(target / "empty-new")].delta_bytes == 0
+    assert diffs[str(target / "empty-new")].direct_delta_bytes == 0
     assert diffs[str(removed)].state == "removed"
-    assert diffs[str(removed)].delta_bytes == -100
+    assert diffs[str(removed)].direct_delta_bytes == -100
     assert diffs[str(empty_removed)].state == "removed"
-    assert diffs[str(empty_removed)].delta_bytes == 0
+    assert diffs[str(empty_removed)].direct_delta_bytes == 0
 
 
 def test_cancelled_scan_is_excluded_as_baseline(migrated_session_factory, tmp_path: Path) -> None:
@@ -312,4 +312,4 @@ def test_incomplete_measurement_has_unknown_delta(migrated_session_factory, tmp_
     diffs, _ = diff_by_path(migrated_session_factory, baseline.id, current.id)
 
     assert diffs[str(target)].state == "incomplete"
-    assert diffs[str(target)].delta_bytes is None
+    assert diffs[str(target)].direct_delta_bytes is None

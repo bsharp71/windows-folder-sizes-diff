@@ -12,7 +12,7 @@ from pathlib import Path
 from sqlalchemy.orm import Session, sessionmaker
 
 from windows_folder_sizes_diff.db.configuration import scan_configuration_hash
-from windows_folder_sizes_diff.db.configuration import MEASUREMENT_ALGORITHM_VERSION
+from windows_folder_sizes_diff.db.configuration import MEASUREMENT_ALGORITHM_VERSION, HIERARCHY_ALGORITHM_VERSION
 from windows_folder_sizes_diff.db.pathing import normalize_windows_path
 from windows_folder_sizes_diff.db.repositories import ScanRepository, VolumeObservationRepository
 from windows_folder_sizes_diff.db.time import utc_now
@@ -85,6 +85,7 @@ class ScanLifecycleService:
                     "cancel_requested": False,
                     "failure_message": None,
                     "measurement_algorithm_version": MEASUREMENT_ALGORITHM_VERSION,
+                    "hierarchy_algorithm_version": HIERARCHY_ALGORITHM_VERSION,
                     "baseline_scan_id": None,
                     "comparison_status": "not_started",
                     "comparison_failure_message": None,

@@ -1,4 +1,4 @@
-TargetDirectory: 'C:\Windows\Temp'
+TargetDirectory: 'C:\Users\brad'
 GrowthThresholdMB: 100
-HistoryDays: 2
+HistoryDays: 3
 DatabasePath: 'data\folder_sizes.db'
