@@ -10,6 +10,8 @@ from sqlalchemy.engine import make_url
 
 from windows_folder_sizes_diff.db.base import Base
 from windows_folder_sizes_diff.db import models  # noqa: F401
+from windows_folder_sizes_diff.config import load_settings
+from windows_folder_sizes_diff.db.engine import database_url_from_path
 
 config = context.config
 
@@ -17,13 +19,17 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 target_metadata = Base.metadata
+DEFAULT_ALEMBIC_DATABASE_URL = "sqlite:///data/folder_sizes.db"
 
 
 def _database_url() -> str:
-    return os.environ.get(
-        "FOLDER_DIFF_DATABASE_URL",
-        config.get_main_option("sqlalchemy.url"),
-    )
+    explicit_url = os.environ.get("FOLDER_DIFF_DATABASE_URL")
+    if explicit_url:
+        return explicit_url
+    configured_url = config.get_main_option("sqlalchemy.url")
+    if configured_url and configured_url != DEFAULT_ALEMBIC_DATABASE_URL:
+        return configured_url
+    return database_url_from_path(load_settings().database_path)
 
 
 def _ensure_sqlite_parent_directory(url: str) -> None:

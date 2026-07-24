@@ -1,4 +1,4 @@
-TargetDirectory: 'C:\Users\brad'
-GrowthThresholdMB: 100
+TargetDirectory: 'C:\Users\brad\.vscode'
+GrowthThresholdMB: 8
 HistoryDays: 3
-DatabasePath: 'data\folder_sizes.db'
+DatabasePath: 'C:\Users\brad\AppData\Local\windows-folder-sizes-diff\data\folder_sizes.db'

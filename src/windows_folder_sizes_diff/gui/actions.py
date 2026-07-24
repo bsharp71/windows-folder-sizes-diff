@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import logging
 import os
-from importlib import metadata
+# from windows_folder_sizes_diff.app_version import APP_VERSION
+# from importlib import metadata
 from pathlib import Path
 from typing import Protocol
 
@@ -495,9 +496,11 @@ def _open_path(path: Path) -> None:
         raise OSError("Opening files is only supported by this desktop build.")
     startfile(path)
 
-
 def _application_version() -> str:
-    try:
-        return metadata.version("windows-folder-sizes-diff")
-    except metadata.PackageNotFoundError:
-        return APP_VERSION
+    return APP_VERSION
+
+# def _application_version() -> str:
+#     try:
+#         return metadata.version("windows-folder-sizes-diff")
+#     except metadata.PackageNotFoundError:
+#         return APP_VERSION

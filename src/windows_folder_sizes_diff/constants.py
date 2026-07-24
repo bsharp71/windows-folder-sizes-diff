@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-APP_VERSION = "0.1.0"
+APP_VERSION = "0.3.3"
 PACKAGE_DIR = Path(__file__).resolve().parent
 SRC_DIR = PACKAGE_DIR.parent
 PROJECT_ROOT = SRC_DIR.parent
