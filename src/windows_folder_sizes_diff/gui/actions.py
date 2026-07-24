@@ -36,10 +36,18 @@ from windows_folder_sizes_diff.gui.state import ApplicationState, ComparisonView
 LOGGER = logging.getLogger(__name__)
 
 
+class Controller(Protocol):
+    """Scan controller surface required by application actions."""
+
+    def start_scan(self) -> None: ...
+
+    def cancel_scan(self) -> None: ...
+
+
 class ActionView(Protocol):
     """Main-window surface required by application actions."""
 
-    _controller: object
+    _controller: Controller
 
     def clear_results(self) -> None: ...
 
